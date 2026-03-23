@@ -40,32 +40,39 @@ This is a **production-ready microservices architecture** for scanning PDF files
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
+- Docker & Docker Compose (or Node.js 18+, Python 3.11+, MongoDB locally)
 - git
 
-### Local Development
+### Option 1: Full Docker Compose (Easiest)
 
-1. **Clone and setup:**
-   ```bash
-   cd gemini
-   cp .env.example .env
-   ```
+```bash
+cd gemini
+cp .env.example .env
+docker-compose up --build
+```
 
-2. **Start all services:**
-   ```bash
-   docker-compose up --build
-   ```
+### Option 2: Local Development (Fastest for Coding)
 
-3. **Access the application:**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:5000
-   - Python Agent: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
+For faster iteration without Docker builds, run services individually:
 
-4. **Verify health:**
-   ```bash
-   curl http://localhost:5000/health
-   ```
+```bash
+# Terminal 1: MongoDB in Docker
+docker run -d -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root123 mongo:6.0
+
+# Terminal 2: LocalStack (S3 mock)
+docker run -d -p 4566:4566 -e SERVICES=s3 localstack/localstack:latest
+
+# Terminal 3: Python Agent
+cd python-agent && pip install -r requirements.txt && python -m uvicorn app.main:app --reload
+
+# Terminal 4: Backend
+cd backend && npm install && npm run dev
+
+# Terminal 5: Frontend
+cd frontend && npm install && npm run dev
+```
+
+**See [`QUICKSTART.md`](QUICKSTART.md) for detailed setup instructions.**
 
 ## Project Structure
 

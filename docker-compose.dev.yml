@@ -1,0 +1,115 @@
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: pdf-mongo-dev
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root123
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data_dev:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pdf-network
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: pdf-localstack-dev
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3
+      DEBUG: 1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "awslocal", "s3", "ls"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pdf-network
+
+  python-agent:
+    build:
+      context: ./python-agent
+      dockerfile: Dockerfile
+    container_name: pdf-agent-dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./python-agent:/app
+    depends_on:
+      - mongo
+    environment:
+      PYTHONUNBUFFERED: 1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pdf-network
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pdf-backend-dev
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/src:/app/src
+    environment:
+      NODE_ENV: development
+      BACKEND_PORT: 5000
+      MONGODB_URI: mongodb://root:root123@mongo:27017/pdf_accessibility?authSource=admin
+      PYTHON_AGENT_URL: http://python-agent:8000
+    depends_on:
+      mongo:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pdf-network
+    command: npm run dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: pdf-frontend-dev
+    ports:
+      - "3000:3000"
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      VITE_API_URL: http://backend:5000/api
+    depends_on:
+      - backend
+    networks:
+      - pdf-network
+    command: npm run dev
+
+volumes:
+  mongo_data_dev:
+
+networks:
+  pdf-network:
+    driver: bridge
