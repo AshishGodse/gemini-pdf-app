@@ -4,11 +4,11 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm ci
+RUN npm install --no-audit --no-fund 2>&1 | tail -20
 
 COPY . .
 
-RUN npm run build
+RUN npm run build 2>&1 | tail -20
 
 # Nginx production stage
 FROM nginx:alpine

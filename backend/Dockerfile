@@ -4,11 +4,11 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm ci
+RUN npm install --no-audit --no-fund 2>&1 | tail -20
 
 COPY . .
 
-RUN npm run build
+RUN npm run build 2>&1 | tail -20
 
 # Production stage
 FROM node:20-alpine
@@ -17,7 +17,7 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm ci --only=production
+RUN npm install --production --no-audit --no-fund && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 

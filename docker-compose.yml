@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   # MongoDB - Document Database
   mongo:
-    image: mongo:7.0-alpine
+    image: mongo:6.0
     container_name: pdf-accessibility-mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-root}
@@ -23,14 +21,14 @@ services:
 
   # LocalStack - AWS S3 Mock
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:2.0
     container_name: pdf-accessibility-localstack
     ports:
       - "4566:4566"
       - "4571:4571"
     environment:
       SERVICES: s3
-      DEBUG: 1
+      DEBUG: 0
       DATA_DIR: /tmp/localstack/data
       AWS_DEFAULT_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
@@ -56,7 +54,7 @@ services:
       - "8000:8000"
     environment:
       PYTHON_ENV: ${PYTHON_AGENT_HOST:-python-agent}
-      LOG_LEVEL: ${BACKEND_LOG_LEVEL:-debug}
+      LOG_LEVEL: ${BACKEND_LOG_LEVEL:-info}
     volumes:
       - ./python-agent:/app
       - scan_temp:/tmp/scans
@@ -90,7 +88,7 @@ services:
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-pdf-bucket}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://localstack:4566}
       SCAN_TIMEOUT_SECONDS: ${SCAN_TIMEOUT_SECONDS:-300}
-      LOG_LEVEL: ${BACKEND_LOG_LEVEL:-debug}
+      LOG_LEVEL: ${BACKEND_LOG_LEVEL:-info}
     volumes:
       - ./backend/src:/app/src
       - scan_temp:/tmp/scans
@@ -119,7 +117,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      VITE_API_URL: http://backend:5000/api
+      VITE_API_URL: http://localhost:5000/api
       VITE_ENV: ${ENVIRONMENT:-development}
     volumes:
       - ./frontend/src:/app/src
