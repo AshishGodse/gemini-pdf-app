@@ -21,7 +21,7 @@ services:
 
   # LocalStack - AWS S3 Mock
   localstack:
-    image: localstack/localstack:2.0
+    image: localstack/localstack:1.4.0
     container_name: pdf-accessibility-localstack
     ports:
       - "4566:4566"

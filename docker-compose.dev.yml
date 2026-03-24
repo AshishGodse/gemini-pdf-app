@@ -18,7 +18,7 @@ services:
       - pdf-network
 
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:1.4.0
     container_name: pdf-localstack-dev
     ports:
       - "4566:4566"
