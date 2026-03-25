@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { dashboardAPI } from '../services/api';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, PieChart, Pie, Cell,
+} from 'recharts';
 
 interface DashboardMetrics {
   summary: {
     totalScanned: number;
     totalIssuesFound: number;
     totalIssuesFixed: number;
+    avgCompliance: number;
     complianceStatus: {
       compliant: number;
       partiallyCompliant: number;
@@ -14,17 +19,94 @@ interface DashboardMetrics {
     };
   };
   trends: Record<string, number>;
+  topIssueTypes: Array<{ type: string; count: number }>;
   recentScans: Array<{
+    jobId: string;
     filename: string;
     compliance: number;
     issues: number;
+    fixed: number;
     status: string;
   }>;
 }
 
+/* ---------- Circular Gauge ---------- */
+function GaugeCircle({ value, size = 180 }: { value: number; size?: number }) {
+  const stroke = 14;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = Math.min(Math.max(value, 0), 100);
+  const offset = circumference - (pct / 100) * circumference;
+
+  let color = '#ef4444';
+  if (pct >= 80) color = '#10b981';
+  else if (pct >= 50) color = '#f59e0b';
+  else if (pct >= 25) color = '#f97316';
+
+  return (
+    <svg width={size} height={size} className="block">
+      {/* background ring */}
+      <circle cx={size / 2} cy={size / 2} r={radius}
+        fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
+      {/* value arc */}
+      <circle cx={size / 2} cy={size / 2} r={radius}
+        fill="none" stroke={color} strokeWidth={stroke}
+        strokeLinecap="round" strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        style={{
+          transform: 'rotate(-90deg)',
+          transformOrigin: '50% 50%',
+          transition: 'stroke-dashoffset 1s ease-in-out',
+        }}
+      />
+      {/* label */}
+      <text x="50%" y="44%" textAnchor="middle" className="fill-gray-900 text-4xl font-bold" dy="0.1em" style={{ fontSize: size * 0.22 }}>
+        {pct}
+      </text>
+      <text x="50%" y="62%" textAnchor="middle" className="fill-gray-500" style={{ fontSize: size * 0.09 }}>
+        %
+      </text>
+    </svg>
+  );
+}
+
+function ratingLabel(pct: number) {
+  if (pct >= 90) return { text: 'Excellent', color: 'text-green-600' };
+  if (pct >= 75) return { text: 'Good', color: 'text-green-500' };
+  if (pct >= 50) return { text: 'Fair', color: 'text-yellow-500' };
+  if (pct >= 25) return { text: 'Poor', color: 'text-orange-500' };
+  return { text: 'Very poor', color: 'text-red-500' };
+}
+
+/* ---------- Guideline Level Card ---------- */
+function LevelCard({ label, pct, accent }: { label: string; pct: number; accent: string }) {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col items-center">
+      <div className="flex items-center gap-2 mb-3 w-full">
+        <span className="font-semibold text-gray-800">{label}</span>
+        <div className="flex-1 h-1 rounded-full bg-gray-200 overflow-hidden ml-2">
+          <div className="h-full rounded-full" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: accent }} />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-4xl font-bold text-gray-800">{pct}%</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Issue Type Label ---------- */
+function prettyIssueType(raw: string) {
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/* ---------- Main Component ---------- */
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -37,133 +119,266 @@ export default function Dashboard() {
         setLoading(false);
       }
     };
-
     fetchMetrics();
-    const interval = setInterval(fetchMetrics, 5000);
+    const interval = setInterval(fetchMetrics, 10000);
     return () => clearInterval(interval);
   }, []);
 
   if (loading) {
-    return <div className="text-center py-12">Loading dashboard...</div>;
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="animate-spin h-10 w-10 border-4 border-indigo-500 border-t-transparent rounded-full" />
+      </div>
+    );
   }
 
   if (!metrics) {
-    return <div className="text-center py-12">No data available</div>;
+    return (
+      <div className="text-center py-24 text-gray-500">
+        <p className="text-lg">No scan data yet. Upload & scan PDFs to see the dashboard.</p>
+      </div>
+    );
   }
 
+  const { summary, trends, topIssueTypes, recentScans } = metrics;
+  const compliancePct = summary.avgCompliance;
+  const rating = ratingLabel(compliancePct);
+
   const complianceData = [
-    { name: 'Compliant', value: metrics.summary.complianceStatus.compliant },
-    { name: 'Partial', value: metrics.summary.complianceStatus.partiallyCompliant },
-    { name: 'Non-Compliant', value: metrics.summary.complianceStatus.nonCompliant }
-  ];
+    { name: 'Compliant', value: summary.complianceStatus.compliant },
+    { name: 'Partial', value: summary.complianceStatus.partiallyCompliant },
+    { name: 'Non-Compliant', value: summary.complianceStatus.nonCompliant },
+  ].filter(d => d.value > 0);
 
-  const COLORS = ['#10b981', '#f59e0b', '#ef4444'];
+  const PIE_COLORS = ['#10b981', '#f59e0b', '#ef4444'];
+  const ISSUE_COLORS = ['#6366f1', '#0ea5e9', '#f43f5e', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6'];
 
-  const trendData = Object.entries(metrics.trends).map(([name, value]) => ({
-    name: name.toUpperCase(),
-    issues: value
-  }));
+  const trendData = Object.entries(trends)
+    .map(([name, value]) => ({ name: name === 'section508' ? 'Sec 508' : name === 'pdfua' ? 'PDF/UA' : name.toUpperCase(), issues: value }))
+    .filter(d => d.issues > 0);
+
+  const issueChartData = topIssueTypes.map(t => ({ name: prettyIssueType(t.type), value: t.count }));
+
+  const wcagPct = trends.wcag > 0 ? Math.max(0, 100 - (trends.wcag * 8)) : 100;
+  const pdfuaPct = trends.pdfua > 0 ? Math.max(0, 100 - (trends.pdfua * 10)) : 100;
+  const adaPct = trends.ada > 0 ? Math.max(0, 100 - (trends.ada * 12)) : 100;
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-bold">Accessibility Compliance Dashboard</h2>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-gray-600 text-sm font-semibold">Total Scanned</h3>
-          <p className="text-4xl font-bold mt-2">{metrics.summary.totalScanned}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-gray-600 text-sm font-semibold">Issues Found</h3>
-          <p className="text-4xl font-bold mt-2">{metrics.summary.totalIssuesFound}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-gray-600 text-sm font-semibold">Issues Fixed</h3>
-          <p className="text-4xl font-bold mt-2">{metrics.summary.totalIssuesFixed}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-gray-600 text-sm font-semibold">Compliance Rate</h3>
-          <p className="text-4xl font-bold mt-2">
-            {metrics.summary.totalScanned > 0 
-              ? Math.round((metrics.summary.complianceStatus.compliant / metrics.summary.totalScanned) * 100) 
-              : 0}%
-          </p>
+    <div className="space-y-6 pb-8">
+      {/* ---- Header ---- */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-900">Accessibility Dashboard</h2>
+          <p className="text-gray-500 mt-1">PDF compliance overview across WCAG 2.1, PDF/UA, ADA, Section 508 & EAA</p>
         </div>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">Compliance Status</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={complianceData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, value }) => `${name}: ${value}`}
-                outerRadius={80}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {complianceData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+      {/* ---- Top row: Gauge + Stats + Level Cards ---- */}
+      <div className="grid grid-cols-12 gap-5">
+        {/* Gauge card */}
+        <div className="col-span-4 bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col items-center">
+          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Overall Compliance</h3>
+          <GaugeCircle value={compliancePct} size={170} />
+          <span className={`mt-2 text-lg font-bold ${rating.color}`}>{rating.text}</span>
+          <div className="flex gap-8 mt-4 text-center">
+            <div>
+              <p className="text-2xl font-bold text-gray-800">{summary.totalScanned}</p>
+              <p className="text-xs text-gray-500 uppercase">PDFs Scanned</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-gray-800">{summary.totalIssuesFound}</p>
+              <p className="text-xs text-gray-500 uppercase">Issues Found</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-gray-800">{summary.totalIssuesFixed}</p>
+              <p className="text-xs text-gray-500 uppercase">Issues Fixed</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Summary stat cards */}
+        <div className="col-span-8 grid grid-cols-3 gap-4">
+          {/* Compliance status cards */}
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl border border-green-200 p-5 flex flex-col justify-between">
+            <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Compliant</span>
+            <p className="text-5xl font-extrabold text-green-700 mt-2">{summary.complianceStatus.compliant}</p>
+            <span className="text-sm text-green-600 mt-1">PDFs passing all checks</span>
+          </div>
+          <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-xl border border-yellow-200 p-5 flex flex-col justify-between">
+            <span className="text-xs font-semibold text-yellow-600 uppercase tracking-wide">Partial</span>
+            <p className="text-5xl font-extrabold text-yellow-700 mt-2">{summary.complianceStatus.partiallyCompliant}</p>
+            <span className="text-sm text-yellow-600 mt-1">PDFs with some issues</span>
+          </div>
+          <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl border border-red-200 p-5 flex flex-col justify-between">
+            <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">Non-Compliant</span>
+            <p className="text-5xl font-extrabold text-red-700 mt-2">{summary.complianceStatus.nonCompliant}</p>
+            <span className="text-sm text-red-600 mt-1">PDFs failing checks</span>
+          </div>
+          {/* Guideline level cards */}
+          <LevelCard label="WCAG 2.1" pct={wcagPct} accent="#3b82f6" />
+          <LevelCard label="PDF/UA" pct={pdfuaPct} accent="#6366f1" />
+          <LevelCard label="ADA / Sec 508" pct={adaPct} accent="#8b5cf6" />
+        </div>
+      </div>
+
+      {/* ---- Charts Row ---- */}
+      <div className="grid grid-cols-2 gap-5">
+        {/* Most Common Issues — donut */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-4">Most Common Issues</h3>
+          {issueChartData.length > 0 ? (
+            <div className="flex items-center">
+              <ResponsiveContainer width="50%" height={240}>
+                <PieChart>
+                  <Pie
+                    data={issueChartData}
+                    cx="50%" cy="50%"
+                    innerRadius={55} outerRadius={90}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {issueChartData.map((_, idx) => (
+                      <Cell key={idx} fill={ISSUE_COLORS[idx % ISSUE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-2 pl-2">
+                {issueChartData.map((d, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-sm">
+                    <span className="w-3 h-3 rounded-full inline-block flex-shrink-0" style={{ backgroundColor: ISSUE_COLORS[idx % ISSUE_COLORS.length] }} />
+                    <span className="text-gray-700 truncate">{d.name}</span>
+                    <span className="ml-auto font-semibold text-gray-900">{d.value}</span>
+                  </div>
                 ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-center py-12">No issues found yet</p>
+          )}
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">Issues by Guideline</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="issues" fill="#3b82f6" />
-            </BarChart>
-          </ResponsiveContainer>
+        {/* Issues by Standard — bar chart */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-4">Issues by Standard</h3>
+          {trendData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={trendData} barCategoryGap="30%">
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="issues" radius={[6, 6, 0, 0]}>
+                  {trendData.map((_, idx) => (
+                    <Cell key={idx} fill={ISSUE_COLORS[idx % ISSUE_COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-gray-400 text-center py-12">No violations yet</p>
+          )}
         </div>
       </div>
 
-      {/* Recent Scans */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4">Recent Scans</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Filename</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Status</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Compliance</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Issues</th>
-              </tr>
-            </thead>
-            <tbody>
-              {metrics.recentScans.map((scan, idx) => (
-                <tr key={idx} className="border-t hover:bg-gray-50">
-                  <td className="px-6 py-3">{scan.filename}</td>
-                  <td className="px-6 py-3">
-                    <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                      scan.status === 'compliant' ? 'bg-green-100 text-green-800' :
-                      scan.status === 'partially_compliant' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {scan.status.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3">{scan.compliance.toFixed(1)}%</td>
-                  <td className="px-6 py-3">{scan.issues}</td>
-                </tr>
+      {/* ---- Compliance Breakdown Donut ---- */}
+      {complianceData.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-4">Compliance Breakdown</h3>
+          <div className="flex items-center justify-center gap-12">
+            <ResponsiveContainer width={220} height={220}>
+              <PieChart>
+                <Pie
+                  data={complianceData}
+                  cx="50%" cy="50%"
+                  innerRadius={60} outerRadius={95}
+                  paddingAngle={4}
+                  dataKey="value"
+                >
+                  {complianceData.map((_, idx) => (
+                    <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="space-y-3">
+              {complianceData.map((d, idx) => (
+                <div key={idx} className="flex items-center gap-3">
+                  <span className="w-4 h-4 rounded-full" style={{ backgroundColor: PIE_COLORS[idx % PIE_COLORS.length] }} />
+                  <span className="text-gray-700 font-medium">{d.name}</span>
+                  <span className="text-xl font-bold text-gray-900 ml-2">{d.value}</span>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* ---- Recent Scans Table ---- */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">Recent Scans</h3>
+        {recentScans.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 uppercase tracking-wider border-b">
+                  <th className="pb-3 pr-4">Filename</th>
+                  <th className="pb-3 pr-4">Status</th>
+                  <th className="pb-3 pr-4">Compliance</th>
+                  <th className="pb-3 pr-4">Issues</th>
+                  <th className="pb-3 pr-4">Fixed</th>
+                  <th className="pb-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {recentScans.map((scan, idx) => {
+                  const isCompliant = scan.status === 'compliant';
+                  const isPartial = scan.status === 'partially_compliant';
+                  return (
+                    <tr key={idx} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => navigate(`/scan/${scan.jobId}`)}>
+                      <td className="py-3 pr-4 font-medium text-gray-800">{scan.filename}</td>
+                      <td className="py-3 pr-4">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          isCompliant ? 'bg-green-100 text-green-700' :
+                          isPartial ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            isCompliant ? 'bg-green-500' : isPartial ? 'bg-yellow-500' : 'bg-red-500'
+                          }`} />
+                          {scan.status.replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${scan.compliance}%`,
+                                backgroundColor: scan.compliance >= 80 ? '#10b981' : scan.compliance >= 50 ? '#f59e0b' : '#ef4444',
+                              }}
+                            />
+                          </div>
+                          <span className="text-gray-700 font-medium">{scan.compliance}%</span>
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-gray-700">{scan.issues}</td>
+                      <td className="py-3 pr-4 text-gray-700">{scan.fixed}</td>
+                      <td className="py-3 text-right">
+                        <span className="text-indigo-500 text-xs font-medium">View →</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-gray-400 text-center py-8">No scans yet</p>
+        )}
       </div>
     </div>
   );

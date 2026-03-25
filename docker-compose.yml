@@ -58,6 +58,7 @@ services:
     volumes:
       - ./python-agent:/app
       - scan_temp:/tmp/scans
+      - ./evaluator/assets:/evaluator/assets
     depends_on:
       - mongo
     healthcheck:
@@ -92,6 +93,7 @@ services:
     volumes:
       - ./backend/src:/app/src
       - scan_temp:/tmp/scans
+      - ./evaluator/assets:/evaluator/assets
     depends_on:
       mongo:
         condition: service_healthy

@@ -13,6 +13,16 @@ export const scanAPI = {
     return response.data;
   },
 
+  uploadAndScan: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/scan/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000
+    });
+    return response.data;
+  },
+
   getScanStatus: async (jobId: string) => {
     const response = await api.get(`/scan/${jobId}`);
     return response.data;
@@ -20,6 +30,11 @@ export const scanAPI = {
 
   listScans: async () => {
     const response = await api.get('/scan');
+    return response.data;
+  },
+
+  autoFix: async (jobId: string) => {
+    const response = await api.post(`/scan/${jobId}/fix`, {}, { timeout: 60000 });
     return response.data;
   }
 };

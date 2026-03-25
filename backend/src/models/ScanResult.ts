@@ -6,6 +6,7 @@ export interface IAccessibilityIssue {
   severity: 'critical' | 'major' | 'minor';
   description: string;
   suggestion: string;
+  manualFixSteps?: string[];
   lineNumber?: number;
 }
 
@@ -18,6 +19,8 @@ export interface IScanResult extends Document {
   compliancePercentage: number;
   status: 'compliant' | 'partially_compliant' | 'non_compliant';
   issues: IAccessibilityIssue[];
+  fixedIssueTypes: string[];
+  fixedFilename: string;
   guidelines: {
     wcag: number;
     pdfua: number;
@@ -37,6 +40,7 @@ const AccessibilityIssueSchema = new Schema({
   severity: String,
   description: String,
   suggestion: String,
+  manualFixSteps: [String],
   lineNumber: Number
 });
 
@@ -50,6 +54,8 @@ const ScanResultSchema = new Schema<IScanResult>(
     compliancePercentage: { type: Number, default: 0 },
     status: { type: String, enum: ['compliant', 'partially_compliant', 'non_compliant'] },
     issues: [AccessibilityIssueSchema],
+    fixedIssueTypes: [String],
+    fixedFilename: String,
     guidelines: {
       wcag: { type: Number, default: 0 },
       pdfua: { type: Number, default: 0 },
