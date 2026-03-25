@@ -8,6 +8,7 @@ import { logger } from './config/logger';
 import healthRoutes from './routes/health';
 import scanRoutes from './routes/scan';
 import dashboardRoutes from './routes/dashboard';
+import s3Routes from './routes/s3';
 import { errorHandler } from './middleware/errorHandler';
 
 import path from 'path';
@@ -63,6 +64,7 @@ app.post('/api/v1/dashboard', async (req: Request, res: Response) => {
 app.use('/health', healthRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/s3', s3Routes);
 
 // 404 Handler
 app.use((req: Request, res: Response) => {

@@ -8,8 +8,8 @@ const api = axios.create({
 });
 
 export const scanAPI = {
-  startScan: async (filename: string, s3Path: string) => {
-    const response = await api.post('/scan/start', { filename, s3Path });
+  startScan: async (filename: string, s3Path: string, s3ConfigId?: string) => {
+    const response = await api.post('/scan/start', { filename, s3Path, s3ConfigId });
     return response.data;
   },
 
@@ -55,6 +55,46 @@ export const healthAPI = {
       return null;
     }
   }
+};
+
+export const s3API = {
+  saveConfig: async (config: {
+    name: string;
+    endpoint: string;
+    bucket: string;
+    region: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+  }) => {
+    const response = await api.post('/s3/config', config);
+    return response.data;
+  },
+
+  getConfigs: async () => {
+    const response = await api.get('/s3/configs');
+    return response.data;
+  },
+
+  deleteConfig: async (id: string) => {
+    const response = await api.delete(`/s3/config/${id}`);
+    return response.data;
+  },
+
+  testConnection: async (config: {
+    endpoint: string;
+    bucket: string;
+    region: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+  }) => {
+    const response = await api.post('/s3/test', config, { timeout: 15000 });
+    return response.data;
+  },
+
+  listFiles: async (configId: string) => {
+    const response = await api.get(`/s3/list/${configId}`);
+    return response.data;
+  },
 };
 
 export default api;

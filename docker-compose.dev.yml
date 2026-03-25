@@ -30,6 +30,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./localstack-init:/etc/localstack/init/ready.d
     healthcheck:
       test: ["CMD", "awslocal", "s3", "ls"]
       interval: 10s
@@ -77,6 +78,7 @@ services:
       BACKEND_PORT: 5000
       MONGODB_URI: mongodb://root:root123@mongo:27017/pdf_accessibility?authSource=admin
       PYTHON_AGENT_URL: http://python-agent:8000
+      ENCRYPTION_KEY: pdf-accessibility-s3-encryption-key-2024
     depends_on:
       mongo:
         condition: service_healthy

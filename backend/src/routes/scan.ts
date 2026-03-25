@@ -82,10 +82,41 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
 // Start a new scan job
 router.post('/start', async (req: Request, res: Response) => {
   try {
-    const { filename, s3Path } = req.body;
+    const { filename, s3Path, s3ConfigId } = req.body;
 
     if (!filename || !s3Path) {
       return res.status(400).json({ error: 'filename and s3Path are required' });
+    }
+
+    // If s3ConfigId is provided, download PDF from S3 to local disk first
+    if (s3ConfigId) {
+      try {
+        const S3Config = (await import('../models/S3Config')).default;
+        const { decrypt } = await import('../utils/encryption');
+        const AWS = (await import('aws-sdk')).default;
+
+        const config = await S3Config.findById(s3ConfigId);
+        if (!config) {
+          return res.status(404).json({ error: 'S3 configuration not found' });
+        }
+
+        const decryptedSecret = decrypt(config.secretAccessKey);
+        const s3 = new AWS.S3({
+          endpoint: config.endpoint,
+          region: config.region,
+          accessKeyId: config.accessKeyId,
+          secretAccessKey: decryptedSecret,
+          s3ForcePathStyle: true,
+        });
+
+        const data = await s3.getObject({ Bucket: config.bucket, Key: filename }).promise();
+        const localPath = path.join(uploadsDir, filename);
+        fs.writeFileSync(localPath, data.Body as Buffer);
+        logger.info(`Downloaded S3 file ${filename} (${(data.Body as Buffer).length} bytes) to ${localPath}`);
+      } catch (s3Err: any) {
+        logger.error('Failed to download from S3:', s3Err.message);
+        return res.status(500).json({ error: `Failed to download PDF from S3: ${s3Err.message}` });
+      }
     }
 
     const jobId = uuidv4();
