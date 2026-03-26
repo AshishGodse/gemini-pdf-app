@@ -137,10 +137,13 @@ class AccessibilityChecker:
         # 9.  Form field labels  (Section 508) – conditional
         record(*self._check_form_labels(pdf))
 
-        # 10. Tab order  (ADA)
+        # 10. Form error identification  (WCAG 3.3.1) – conditional
+        record(*self._check_form_error_identification(pdf))
+
+        # 11. Tab order  (ADA)
         record(*self._check_tab_order(pdf))
 
-        # 11. Reading‑order / navigation for AT  (EAA) – conditional
+        # 12. Reading‑order / navigation for AT  (EAA) – conditional
         record(*self._check_eaa_reading_order(pdf))
 
         pdf.close()
@@ -437,6 +440,79 @@ class AccessibilityChecker:
             "Add a programmatic label (/TU tooltip) to each form field so assistive technologies "
             "can announce the field purpose. In Adobe Acrobat open Forms > Edit, select each field, "
             "go to Properties > General and enter a descriptive Tooltip.",
+            True,
+        )])
+
+    def _check_form_error_identification(self, pdf) -> Tuple[int, bool, list]:
+        """WCAG 3.3.1 — form fields that accept input must provide error identification.
+
+        A field passes if it has:
+        - the Required flag (Ff bit 1) to identify missing input, AND/OR
+        - /AA validation actions (/K keystroke, /F format, /V validate) for
+          runtime error identification.
+        A field with an empty /AA dictionary is treated as missing validation
+        because the presence of /AA signals that validation was intended.
+        """
+        acroform = pdf.Root.get(pikepdf.Name("/AcroForm"))
+        if acroform is None:
+            return (0, False, [])
+        fields = acroform.get(pikepdf.Name("/Fields"))
+        if not fields or len(fields) == 0:
+            return (0, False, [])
+
+        input_fields = 0
+        missing_validation = 0
+        try:
+            for field in fields:
+                try:
+                    f = field.get_object() if hasattr(field, "get_object") else field
+                    ft = str(f.get(pikepdf.Name("/FT"), ""))
+                    # Only check input fields (text, choice), skip buttons
+                    if ft not in ("/Tx", "/Ch"):
+                        continue
+                    input_fields += 1
+
+                    # Check Required flag (Ff bit 1)
+                    ff = f.get(pikepdf.Name("/Ff"))
+                    has_required = bool(int(ff) & 2) if ff is not None else False
+
+                    # Check for validation AA actions
+                    aa = f.get(pikepdf.Name("/AA"))
+                    has_validation = False
+                    aa_present = aa is not None
+                    if aa_present:
+                        try:
+                            for trigger in ("/K", "/F", "/V"):
+                                if aa.get(pikepdf.Name(trigger)) is not None:
+                                    has_validation = True
+                                    break
+                        except Exception:
+                            pass
+
+                    # An empty /AA dict means validation was intended but not
+                    # implemented — flag as missing even if Required is set.
+                    if aa_present and not has_validation:
+                        missing_validation += 1
+                    elif not aa_present and not has_required:
+                        missing_validation += 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        if input_fields == 0:
+            return (0, False, [])
+        if missing_validation == 0:
+            return (10, False, [])
+        return (10, True, [self._issue(
+            "missing_error_identification", "Missing Form Error Identification",
+            f"{missing_validation} of {input_fields} input field(s) lack error identification "
+            "mechanisms such as required-field flags or input validation actions.",
+            "WCAG 2.1 SC 3.3.1", "WCAG", "WCAG 2.1",
+            "Add the Required flag (/Ff bit 1) to mandatory fields and attach validation "
+            "actions (/AA with /K, /F, or /V triggers) so the PDF viewer can identify and "
+            "report input errors to the user. In Adobe Acrobat open Forms > Edit, select "
+            "each field, go to Properties > Validate and set appropriate format/validation rules.",
             True,
         )])
 
