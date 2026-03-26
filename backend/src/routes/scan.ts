@@ -4,8 +4,11 @@ import axios from 'axios';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import AWS from 'aws-sdk';
 import { ScanJobModel } from '../models/ScanJob';
 import { ScanResultModel } from '../models/ScanResult';
+import S3Config from '../models/S3Config';
+import { decrypt } from '../utils/encryption';
 import { logger } from '../config/logger';
 
 const router = Router();
@@ -91,10 +94,6 @@ router.post('/start', async (req: Request, res: Response) => {
     // If s3ConfigId is provided, download PDF from S3 to local disk first
     if (s3ConfigId) {
       try {
-        const S3Config = (await import('../models/S3Config')).default;
-        const { decrypt } = await import('../utils/encryption');
-        const AWS = (await import('aws-sdk')).default;
-
         const config = await S3Config.findById(s3ConfigId);
         if (!config) {
           return res.status(404).json({ error: 'S3 configuration not found' });

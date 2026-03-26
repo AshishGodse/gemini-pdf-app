@@ -1,16 +1,14 @@
 services:
-  # MongoDB - Document Database
   mongo:
     image: mongo:6.0
-    container_name: pdf-accessibility-mongo
+    container_name: pdf-mongo-dev
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-root123}
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root123
     ports:
       - "27017:27017"
     volumes:
-      - mongo_data:/data/db
-      - mongo_config:/data/configdb
+      - mongo_data_dev:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -19,23 +17,20 @@ services:
     networks:
       - pdf-network
 
-  # LocalStack - AWS S3 Mock
   localstack:
     image: localstack/localstack:1.4.0
-    container_name: pdf-accessibility-localstack
+    container_name: pdf-localstack-dev
     ports:
       - "4566:4566"
-      - "4571:4571"
     environment:
       SERVICES: s3
-      DEBUG: 0
-      DATA_DIR: /tmp/localstack/data
+      DEBUG: 1
       AWS_DEFAULT_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
     volumes:
-      - localstack_data:/tmp/localstack
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./localstack-init:/etc/localstack/init/ready.d
     healthcheck:
       test: ["CMD", "awslocal", "s3", "ls"]
       interval: 10s
@@ -44,85 +39,68 @@ services:
     networks:
       - pdf-network
 
-  # Python FastAPI Agent - PDF Scanning Service
   python-agent:
     build:
       context: ./python-agent
       dockerfile: Dockerfile
-    container_name: pdf-accessibility-agent
+    container_name: pdf-agent-dev
     ports:
       - "8000:8000"
-    environment:
-      PYTHON_ENV: ${PYTHON_AGENT_HOST:-python-agent}
-      LOG_LEVEL: ${BACKEND_LOG_LEVEL:-info}
     volumes:
       - ./python-agent:/app
-      - scan_temp:/tmp/scans
       - ./evaluator/assets:/evaluator/assets
     depends_on:
       - mongo
+    environment:
+      PYTHONUNBUFFERED: 1
+      BACKEND_URL: http://backend:5000
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - pdf-network
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # Express.js Backend API
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: pdf-accessibility-backend
+      dockerfile: Dockerfile.dev
+    container_name: pdf-backend-dev
     ports:
       - "5000:5000"
-    environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      BACKEND_PORT: ${BACKEND_PORT:-5000}
-      MONGODB_URI: ${MONGODB_URI:-mongodb://root:root123@mongo:27017/pdf_accessibility?authSource=admin}
-      PYTHON_AGENT_URL: http://python-agent:8000
-      AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-pdf-bucket}
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://localstack:4566}
-      SCAN_TIMEOUT_SECONDS: ${SCAN_TIMEOUT_SECONDS:-300}
-      LOG_LEVEL: ${BACKEND_LOG_LEVEL:-info}
     volumes:
       - ./backend/src:/app/src
-      - scan_temp:/tmp/scans
       - ./evaluator/assets:/evaluator/assets
+    environment:
+      NODE_ENV: development
+      BACKEND_PORT: 5000
+      MONGODB_URI: mongodb://root:root123@mongo:27017/pdf_accessibility?authSource=admin
+      PYTHON_AGENT_URL: http://python-agent:8000
+      ENCRYPTION_KEY: pdf-accessibility-s3-encryption-key-2024
     depends_on:
       mongo:
         condition: service_healthy
       localstack:
         condition: service_healthy
-      python-agent:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     networks:
       - pdf-network
     command: npm run dev
 
-  # React Frontend
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: pdf-accessibility-frontend
+      dockerfile: Dockerfile.dev
+    container_name: pdf-frontend-dev
     ports:
       - "3000:3000"
-    environment:
-      VITE_API_URL: http://localhost:5000/api
-      VITE_ENV: ${ENVIRONMENT:-development}
+      - "5173:5173"
     volumes:
       - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      VITE_API_URL: http://localhost:5000/api
     depends_on:
       - backend
     networks:
@@ -130,10 +108,7 @@ services:
     command: npm run dev
 
 volumes:
-  mongo_data:
-  mongo_config:
-  localstack_data:
-  scan_temp:
+  mongo_data_dev:
 
 networks:
   pdf-network:

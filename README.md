@@ -1,14 +1,59 @@
-# PDF Accessibility Validation System - Comprehensive Guide
+# CloudGeeks PDF App
 
-## Overview
+---
 
-This is a **production-ready microservices architecture** for scanning PDF files for accessibility compliance according to:
-- WCAG 2.1 (Web Content Accessibility Guidelines)
-- PDF/UA (PDF Universal Accessibility)
-- ADA Section 508 (Americans with Disabilities Act)
-- European Accessibility Act
+## Table of Contents
 
-## System Architecture
+- [1. Overview](#1-overview)
+- [2. System Architecture](#2-system-architecture)
+- [3. Quick Start](#3-quick-start)
+- [4. Setup Options](#4-setup-options)
+- [5. API Reference](#5-api-reference)
+- [6. Data Models](#6-data-models)
+- [7. Workflow](#7-workflow)
+- [8. Developer Notes](#8-developer-notes)
+- [9. Database & S3 Management](#9-database--s3-management)
+- [10. Testing](#10-testing)
+- [11. Troubleshooting](#11-troubleshooting)
+- [12. Production Deployment](#12-production-deployment)
+- [13. Future Enhancements](#13-future-enhancements)
+
+---
+
+## 1. Overview
+
+A **production-ready microservices system** for scanning PDF files for accessibility compliance:
+
+- **WCAG 2.1** (Web Content Accessibility Guidelines)
+- **PDF/UA** (PDF Universal Accessibility)
+- **ADA Section 508** (Americans with Disabilities Act)
+- **European Accessibility Act**
+
+### What's Included
+
+| Component | Files | Status |
+|-----------|-------|--------|
+| Backend (Express.js) | 12 | ✅ Ready |
+| Frontend (React + Vite) | 16 | ✅ Ready |
+| Python Agent (FastAPI) | 8 | ✅ Ready |
+| Docker | 2 compose + 3 Dockerfiles | ✅ Ready |
+| Tests | 1 feature file | ✅ Ready |
+| **Total** | **50+** | **✅ Production-Ready** |
+
+### Key Features
+
+- Real PDF analysis (11 accessibility checks)
+- Auto-fix with pikepdf (metadata, language, marked content, tab order)
+- Manual fix step-by-step guides for all issues
+- S3 source configuration with AES-256-GCM encrypted credentials
+- LocalStack integration (auto-creates `pdf-bucket`)
+- Upload local PDFs with drag-and-drop
+- Silktide-style dashboard with circular gauge, compliance cards, charts
+- V1 stateless evaluation API endpoints
+
+---
+
+## 2. System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -21,8 +66,8 @@ This is a **production-ready microservices architecture** for scanning PDF files
 ┌─────────────────────────────────────────────────────────────────┐
 │                  Backend (Express.js)                           │
 │                     Port 5000 | REST API                        │
-│  Routes: /health, /api/scan/*, /api/dashboard/*                │
-│  Database Connection | S3 Integration | Job Orchestration      │
+│  Routes: /health, /api/scan/*, /api/s3/*, /api/dashboard/*     │
+│  S3 Integration | Encrypted Credentials | Job Orchestration    │
 └────────────────┬────────────────────────────────────────────────┘
                  │ HTTP
                  ↓
@@ -37,13 +82,107 @@ This is a **production-ready microservices architecture** for scanning PDF files
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+### Component Responsibilities
+
+#### Frontend (React + Vite)
+- User interface for scanning PDFs
+- Real-time status polling (2s interval)
+- Dashboard with metrics, trends, charts (Recharts)
+- Responsive design (Tailwind CSS)
+- Pages: `/` (Home), `/dashboard`, `/scan/:jobId`
+
+#### Backend (Express.js + TypeScript)
+- REST API gateway and job orchestration
+- S3/bucket integration with encrypted credentials
+- Result aggregation for dashboard
+- Multer-based PDF upload
+- Mongoose database abstraction
+
+#### Python FastAPI Agent
+- PDF parsing and analysis (PyPDF2 + pikepdf)
+- 11 accessibility validation checks
+- Auto-fix using pikepdf
+- Results callback to backend
+
+#### MongoDB
+- Collections: `scanjobs`, `scanresults`, `s3configs`
+- Credentials encrypted with AES-256-GCM
+
+#### LocalStack (S3 Mock)
+- Dev/test S3 storage on port 4566
+- Init script auto-creates `pdf-bucket`
+
+### Project Structure
+
+```
+gemini/
+├── backend/                    # Express.js API
+│   ├── src/
+│   │   ├── server.ts          # Main server
+│   │   ├── config/            # Configuration (DB, logger)
+│   │   ├── routes/            # API endpoints (scan, s3, dashboard, health)
+│   │   ├── models/            # Mongoose schemas (ScanJob, ScanResult, S3Config)
+│   │   ├── utils/             # Encryption utility (AES-256-GCM)
+│   │   └── middleware/        # Error handling
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── Dockerfile
+│
+├── python-agent/              # FastAPI PDF Scanner
+│   ├── app/
+│   │   ├── main.py           # FastAPI app (scan, fix, V1 endpoints)
+│   │   ├── models.py         # Pydantic schemas
+│   │   └── services/
+│   │       ├── analyzer.py   # PDF analysis logic (11 check types)
+│   │       └── accessibility_checker.py  # V1 accessibility checker
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── frontend/                   # React + Vite UI
+│   ├── src/
+│   │   ├── pages/            # Home, Dashboard, ScanStatus
+│   │   ├── services/         # API client (scan, s3, dashboard)
+│   │   ├── hooks/            # Custom React hooks (usePolling)
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── index.html
+│   ├── package.json
+│   └── Dockerfile
+│
+├── localstack-init/           # LocalStack initialization
+│   └── init-s3.sh            # Auto-creates pdf-bucket
+│
+├── tests/                      # Karate API tests
+│   └── api.feature
+│
+├── docker-compose.yml         # Production configuration
+├── docker-compose.dev.yml     # Development configuration
+├── .env.example               # Environment template
+└── README.md                  # ← This file
+```
+
+---
+
+## 3. Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose (or Node.js 18+, Python 3.11+, MongoDB locally)
-- git
+- 4GB+ RAM for Docker
+- Git
 
-### Option 1: Full Docker Compose (Easiest)
+### Option 1: Docker Compose Dev (Recommended)
+
+```bash
+cd gemini
+docker-compose -f docker-compose.dev.yml up --build
+```
+
+**Access:**
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:5000
+- Python Agent Docs: http://localhost:8000/docs
+
+### Option 2: Full Docker Compose
 
 ```bash
 cd gemini
@@ -51,19 +190,17 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-### Option 2: Local Development (Fastest for Coding)
-
-For faster iteration without Docker builds, run services individually:
+### Option 3: Local Development (Fastest for Coding)
 
 ```bash
 # Terminal 1: MongoDB in Docker
-docker run -d -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root123 mongo:6.0
+docker run -d -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=root123 --name pdf-mongo mongo:6.0
 
 # Terminal 2: LocalStack (S3 mock)
-docker run -d -p 4566:4566 -e SERVICES=s3 localstack/localstack:latest
+docker run -d -p 4566:4566 -e SERVICES=s3 -v /var/run/docker.sock:/var/run/docker.sock --name pdf-localstack localstack/localstack:latest
 
 # Terminal 3: Python Agent
-cd python-agent && pip install -r requirements.txt && python -m uvicorn app.main:app --reload
+cd python-agent && pip install -r requirements.txt && python -m uvicorn app.main:app --reload --port 8000
 
 # Terminal 4: Backend
 cd backend && npm install && npm run dev
@@ -72,160 +209,18 @@ cd backend && npm install && npm run dev
 cd frontend && npm install && npm run dev
 ```
 
-**See [`QUICKSTART.md`](QUICKSTART.md) for detailed setup instructions.**
-
-## Project Structure
-
-```
-gemini/
-├── backend/                    # Express.js API
-│   ├── src/
-│   │   ├── server.ts          # Main server
-│   │   ├── config/            # Configuration (DB, logger)
-│   │   ├── routes/            # API endpoints
-│   │   ├── services/          # Business logic
-│   │   ├── models/            # Mongoose schemas
-│   │   └── middleware/        # Error handling, etc
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── Dockerfile
-│
-├── python-agent/              # FastAPI PDF Scanner
-│   ├── app/
-│   │   ├── main.py           # FastAPI app
-│   │   ├── models.py         # Pydantic schemas
-│   │   └── services/
-│   │       └── analyzer.py   # PDF analysis logic
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── frontend/                   # React + Vite UI
-│   ├── src/
-│   │   ├── pages/            # Home, Dashboard, ScanStatus
-│   │   ├── components/       # Reusable UI components
-│   │   ├── services/         # API client
-│   │   ├── hooks/            # Custom React hooks
-│   │   ├── App.tsx
-│   │   └── main.tsx
-│   ├── index.html
-│   ├── package.json
-│   └── Dockerfile
-│
-├── tests/                      # Karate API tests
-│   └── api.feature            # Test scenarios
-│
-├── docs/                       # Documentation
-│   ├── README.md
-│   ├── ARCHITECTURE.md
-│   ├── API.md
-│   └── SETUP.md
-│
-├── docker-compose.yml         # Production configuration
-├── .env.example               # Environment template
-└── .gitignore
-```
-
-## API Endpoints
-
-### Health Check
-```http
-GET /health
-Response 200:
-{
-  "status": "ok",
-  "timestamp": "2026-03-23T10:30:00Z"
-}
-```
-
-### Start Scan Job
-```http
-POST /api/scan/start
-Content-Type: application/json
-
-{
-  "filename": "document.pdf",
-  "s3Path": "s3://pdf-bucket/document.pdf"
-}
-
-Response 201:
-{
-  "jobId": "uuid-here",
-  "status": "pending",
-  "message": "Scan job created"
-}
-```
-
-### Get Scan Status
-```http
-GET /api/scan/{jobId}
-
-Response 200:
-{
-  "jobId": "uuid-here",
-  "status": "completed",
-  "filename": "document.pdf",
-  "startedAt": "2026-03-23T10:30:00Z",
-  "completedAt": "2026-03-23T10:35:00Z",
-  "result": {
-    "totalIssues": 12,
-    "compliancePercentage": 85,
-    "status": "partially_compliant",
-    "issues": [...]
-  }
-}
-```
-
-### Dashboard Metrics
-```http
-GET /api/dashboard/metrics
-
-Response 200:
-{
-  "summary": {
-    "totalScanned": 15,
-    "totalIssuesFound": 120,
-    "totalIssuesFixed": 45,
-    "complianceStatus": {
-      "compliant": 5,
-      "partiallyCompliant": 8,
-      "nonCompliant": 2
-    }
-  },
-  "trends": {
-    "wcag": 80,
-    "pdfua": 25,
-    "ada": 10,
-    "section508": 5,
-    "eu": 0
-  },
-  "recentScans": [...]
-}
-```
-
-## Karate Testing
-
-Run automated API tests:
+### Verify Health
 
 ```bash
-# Navigate to project root
-cd gemini
-
-# Run Karate tests
-docker-compose exec backend npm run test:karate
-
-# or locally (with services running):
-java -jar karate.jar tests/api.feature
+curl http://localhost:5000/health
+curl http://localhost:8000/health
 ```
 
-Test coverage:
-- ✓ Health check endpoint
-- ✓ Start scan job
-- ✓ Get scan status
-- ✓ List scans
-- ✓ Dashboard metrics
-- ✓ Error handling (404, 400)
+---
 
-## Environment Variables
+## 4. Setup Options
+
+### Environment Variables
 
 Key configuration in `.env`:
 
@@ -244,27 +239,227 @@ S3_ENDPOINT=http://localstack:4566
 # Python Agent
 PYTHON_AGENT_URL=http://python-agent:8000
 
+# Security
+ENCRYPTION_KEY=your-secure-encryption-key-here  # AES-256-GCM for S3 secret keys
+
 # Scanning
 SCAN_TIMEOUT_SECONDS=300
 MAX_PDF_SIZE_MB=50
 ```
 
-For **production**, update:
-- Real MongoDB connection string
-- Real AWS S3 credentials (remove S3_ENDPOINT)
-- Disable debug logging
-- Set ENVIRONMENT=production
+### Docker Compose Commands
 
-## Data Models
+```bash
+# Build and start
+docker-compose -f docker-compose.dev.yml up --build
+
+# Rebuild specific service
+docker-compose -f docker-compose.dev.yml build --no-cache backend
+
+# Run in background
+docker-compose -f docker-compose.dev.yml up -d
+
+# Stop all
+docker-compose -f docker-compose.dev.yml down
+
+# Reset all data
+docker-compose -f docker-compose.dev.yml down -v
+
+# View logs
+docker-compose -f docker-compose.dev.yml logs -f backend
+docker-compose -f docker-compose.dev.yml logs --tail 100 python-agent
+```
+
+### Development Without Docker
+
+#### Backend
+```bash
+cd backend
+npm install
+npm run dev          # Dev server with hot reload on port 5000
+npm run build        # Compile TypeScript
+npm run start        # Production build
+npm test             # Unit tests
+```
+
+#### Frontend
+```bash
+cd frontend
+npm install
+npm run dev          # Vite dev server on port 3000/5173
+npm run build        # Production build
+npm run preview      # Preview production build
+```
+
+#### Python Agent
+```bash
+cd python-agent
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
+# API docs: http://localhost:8000/docs
+```
+
+### Service Ports
+
+| Service | Host Port | Container Hostname |
+|---------|-----------|-------------------|
+| Frontend | 3000, 5173 | frontend |
+| Backend | 5000 | backend |
+| Python Agent | 8000 | python-agent |
+| MongoDB | 27017 | mongo |
+| LocalStack | 4566 | localstack |
+
+---
+
+## 5. API Reference
+
+**Base URL:** `http://localhost:5000`
+
+### Health Check
+
+```http
+GET /health
+→ 200: { "status": "ok", "timestamp": "..." }
+```
+
+### Scan Endpoints
+
+#### Start Scan
+```http
+POST /api/scan/start
+Content-Type: application/json
+
+{
+  "filename": "document.pdf",
+  "s3Path": "s3://pdf-bucket/document.pdf",
+  "s3ConfigId": "mongo-id"           // optional — downloads from S3 first
+}
+
+→ 201: { "jobId": "uuid", "status": "pending", "message": "Scan job created" }
+→ 400: { "error": "filename and s3Path are required" }
+```
+
+#### Upload and Scan
+```http
+POST /api/scan/upload
+Content-Type: multipart/form-data
+file: document.pdf (max 50MB)
+
+→ 201: { "jobId": "uuid", "filename": "document.pdf", "status": "pending" }
+```
+
+#### Get Scan Status
+```http
+GET /api/scan/{jobId}
+
+→ 200: {
+  "jobId": "uuid",
+  "status": "pending|scanning|completed|failed",
+  "filename": "document.pdf",
+  "startedAt": "...",
+  "completedAt": "...",
+  "result": {
+    "totalIssues": 12,
+    "compliancePercentage": 85.0,
+    "status": "partially_compliant",
+    "issues": [...],
+    "guidelines": { "wcag": 8, "pdfua": 2, "ada": 1, "section508": 1, "eu": 0 }
+  }
+}
+→ 404: { "error": "Scan job not found" }
+```
+
+**Compliance status:** `compliant` (100%), `partially_compliant` (70-99%), `non_compliant` (<70%)
+
+#### List Scans
+```http
+GET /api/scan?limit=50&skip=0&status=completed
+→ 200: [{ "jobId": "...", "filename": "...", "status": "...", ... }]
+```
+
+#### Trigger Auto-Fix
+```http
+POST /api/scan/{jobId}/fix
+
+→ 200: {
+  "success": true,
+  "fixedIssueTypes": ["missing_title", "missing_author", "missing_lang"],
+  "fixedFilename": "document_fixed.pdf"
+}
+```
+
+**Download fixed PDF:** `GET /pdfs/{fixedFilename}`
+
+### Dashboard
+
+```http
+GET /api/dashboard/metrics
+
+→ 200: {
+  "summary": {
+    "totalScanned": 45,
+    "totalIssuesFound": 450,
+    "totalIssuesFixed": 120,
+    "complianceStatus": { "compliant": 18, "partiallyCompliant": 22, "nonCompliant": 5 }
+  },
+  "trends": { "wcag": 280, "pdfua": 95, "ada": 45, "section508": 25, "eu": 5 },
+  "recentScans": [{ "filename": "...", "compliance": 92.5, "issues": 7, "status": "..." }]
+}
+```
+
+### S3 Source Configuration
+
+```http
+POST /api/s3/config         # Save S3 source (secretAccessKey encrypted with AES-256-GCM)
+Body: { "name", "endpoint", "bucket", "region", "accessKeyId", "secretAccessKey" }
+→ 201: { "_id", "name", "endpoint", "bucket", "region", "accessKeyId", "createdAt" }
+
+GET  /api/s3/configs         # List sources (secrets excluded)
+→ 200: [{ "_id", "name", "endpoint", "bucket", "region", "accessKeyId", "createdAt" }]
+
+DELETE /api/s3/config/{id}   # Delete source
+→ 200: { "success": true }
+
+POST /api/s3/test            # Test connection (raw credentials, not stored)
+Body: { "endpoint", "bucket", "region", "accessKeyId", "secretAccessKey" }
+→ 200: { "success": true, "message": "Connection successful" }
+
+GET  /api/s3/list/{configId} # List PDF files from bucket
+→ 200: [{ "name": "doc.pdf", "size": 245000, "lastModified": "..." }]
+```
+
+### V1 Evaluation API (Stateless)
+
+These proxy to the Python agent for stateless batch evaluation.
+
+```http
+POST /api/v1/scan
+Body: { "fileUrls": ["https://example.com/doc1.pdf", "..."] }
+→ 200: { "files": [{ "fileName", "nonCompliancePercent", "complianceStatus", "issues" }], "worstFile": {...} }
+
+POST /api/v1/remediate       # Same body — returns issues with fix suggestions
+POST /api/v1/dashboard       # Same body — returns aggregate compliance stats
+```
+
+### Internal Endpoints (Python Agent → Backend)
+
+```http
+PUT /api/scan/{jobId}/status     # Agent updates job status
+PUT /api/scan/{jobId}/result     # Agent sends scan results
+PUT /api/scan/{jobId}/fixed-pdf  # Agent sends fixed PDF binary
+```
+
+---
+
+## 6. Data Models
 
 ### ScanJob
-Tracks the status of each scan request:
 ```typescript
 {
   jobId: string;           // UUID
-  filename: string;        // Original PDF filename
+  filename: string;
   status: string;          // 'pending' | 'scanning' | 'completed' | 'failed'
-  s3Path: string;          // S3 location
+  s3Path: string;
   startedAt: Date;
   completedAt?: Date;
   error?: string;
@@ -274,16 +469,17 @@ Tracks the status of each scan request:
 ```
 
 ### ScanResult
-Detailed results from PDF analysis:
 ```typescript
 {
-  jobId: string;           // Links to ScanJob
+  jobId: string;
   filename: string;
   totalIssues: number;
   issuesFixed: number;
-  compliancePercentage: number;  // 0-100
-  status: string;          // 'compliant' | 'partially_compliant' | 'non_compliant'
+  compliancePercentage: number;    // 0-100
+  status: string;                  // 'compliant' | 'partially_compliant' | 'non_compliant'
   issues: AccessibilityIssue[];
+  fixedIssueTypes: string[];       // Types auto-fixed by pikepdf
+  fixedFilename: string;           // Filename of fixed PDF
   guidelines: {
     wcag: number;
     pdfua: number;
@@ -303,234 +499,274 @@ Detailed results from PDF analysis:
   category: string;        // e.g., 'WCAG 2.1 - 1.1.1'
   severity: string;        // 'critical' | 'major' | 'minor'
   description: string;
-  suggestion: string;      // Fix recommendation
+  suggestion: string;
+  manualFixSteps: string[];  // Step-by-step manual fix guide
   lineNumber?: number;
 }
 ```
 
-## Workflow
+### S3Config
+```typescript
+{
+  name: string;
+  endpoint: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;   // Encrypted with AES-256-GCM
+  createdAt: Date;
+}
+```
+
+### Issue Categories
+
+| Standard | Checks |
+|----------|--------|
+| WCAG 2.1 A | Missing alt text, page title, color contrast |
+| WCAG 2.1 AA | Enhanced contrast ratios, focus indicators |
+| WCAG 2.1 AAA | Extended descriptions, captions |
+| PDF/UA | Document structure, tagging, font embedding |
+| ADA Section 508 | WCAG 2.1 AA compliance for US federal docs |
+| EU Accessibility Act | EU public sector requirements |
+
+---
+
+## 7. Workflow
 
 ### User Perspective
 
-1. **Navigate to Home Page** (`/`)
-   - See sample PDFs or upload new ones
-   - Click "Scan" button to start analysis
+1. **Home Page** (`/`) — Configure S3 sources or upload local PDFs → Click "Scan"
+2. **Scan Progress** (`/scan/:jobId`) — Real-time polling, progress bar
+3. **Results** — Issue list with severity, descriptions, suggested fixes, manual fix guides, auto-fix button, download fixed PDF, view resolved issues
+4. **Dashboard** (`/dashboard`) — Circular gauge, Level A/AA/AAA cards, charts, clickable recent scans table
 
-2. **Scan in Progress** (`/scan/:jobId`)
-   - Real-time status updates via polling
-   - Shows progress, current step
+### Technical Flow
 
-3. **View Results**
-   - Issue list with severity levels
-   - Detailed descriptions and fix suggestions
-   - Compliance percentage
+1. **Frontend** sends `POST /api/scan/start` (with optional `s3ConfigId`)
+2. **Backend** downloads PDF from S3 if `s3ConfigId` provided
+3. **Backend** creates ScanJob in MongoDB, returns `jobId`
+4. **Backend** triggers async `POST /scan` to Python Agent
+5. **Frontend** polls `GET /api/scan/{jobId}` every 2s
+6. **Python Agent** downloads PDF from backend `/pdfs/{filename}`
+7. **Python Agent** runs 11 accessibility checks
+8. **Python Agent** calls `PUT /api/scan/{jobId}/result` with results
+9. **Backend** stores ScanResult, updates ScanJob status
+10. **Frontend** receives `status: 'completed'`, displays results
+11. **Dashboard** aggregates metrics from all ScanResults
 
-4. **Dashboard** (`/dashboard`)
-   - Overview metrics
-   - Compliance trends
-   - Recent scans table
-   - Issue distribution by guideline
+### Scan Flow Diagram
 
-### Technical Workflow
-
-1. **Frontend** sends POST `/api/scan/start`
-2. **Backend** creates ScanJob in MongoDB, returns jobId
-3. **Backend** triggers async call to **Python Agent**
-4. **Frontend** polls GET `/api/scan/{jobId}` every 2 seconds
-5. **Python Agent** analyzes PDF, calls webhook with results
-6. **Backend** stores ScanResult in MongoDB, updates ScanJob status
-7. **Frontend** receives `status: 'completed'`, displays results
-8. **Dashboard** aggregates metrics from all ScanResults
-
-## Development Commands
-
-### Backend
-```bash
-cd backend
-npm install
-npm run dev          # Start dev server with hot reload
-npm run build        # Compile TypeScript
-npm run start        # Run production build
-npm test            # Run unit tests
+```
+Frontend          Backend            Python Agent       MongoDB
+   │                 │                    │                │
+   │─POST /scan/start─>│                 │                │
+   │                 │─create ScanJob───────────────────>│
+   │<─return jobId────│                   │                │
+   │                 │─POST /scan────────>│                │
+   │                 │                    │                │
+   │─GET /scan/{id}──>│                   │  (analyzing)   │
+   │<─status:scanning──│                  │                │
+   │                 │                    │                │
+   │  (polling 2s)   │     PUT /result───>│                │
+   │                 │<────────────────────                │
+   │                 │─store ScanResult─────────────────>│
+   │                 │─update ScanJob───────────────────>│
+   │                 │                    │                │
+   │─GET /scan/{id}──>│                   │                │
+   │<─status:completed─│ + result data    │                │
 ```
 
-### Frontend
+---
+
+## 8. Developer Notes
+
+### Backend Notes
+
+**Scan flow:**
+1. `POST /api/scan/start` with `{ filename, s3Path, s3ConfigId? }`
+2. If `s3ConfigId`, backend downloads PDF from S3 (decrypted credentials) to `/public/pdfs/`
+3. Creates ScanJob, returns `jobId`
+4. Triggers Python Agent `POST /scan`
+5. Agent downloads PDF from `GET /pdfs/{filename}`
+6. Agent callbacks: `PUT /api/scan/{jobId}/status` and `PUT /api/scan/{jobId}/result`
+
+**All backend routes:**
+| Route Group | Endpoints |
+|-------------|-----------|
+| Scan (`/api/scan`) | `POST /start`, `POST /upload`, `GET /:jobId`, `GET /`, `PUT /:jobId/status`, `PUT /:jobId/result`, `PUT /:jobId/fixed-pdf`, `POST /:jobId/fix` |
+| S3 (`/api/s3`) | `POST /config`, `GET /configs`, `DELETE /config/:id`, `POST /test`, `GET /list/:configId`, `GET /download/:configId/:filename` |
+| Dashboard (`/api/dashboard`) | `GET /metrics` |
+| V1 Proxy | `POST /api/v1/scan`, `POST /api/v1/remediate`, `POST /api/v1/dashboard` |
+
+**Environment:** `BACKEND_PORT`, `MONGODB_URI`, `PYTHON_AGENT_URL`, `ENCRYPTION_KEY`
+
+### Python Agent Notes
+
+**Analysis checks (11 types):** Missing title, author, subject, language metadata; missing marked content (structure tags); tab order not specified; missing alt text on images; low contrast ratio; font embedding issues; heading structure problems; bookmark/outline presence.
+
+**Auto-fix (pikepdf):** Missing title, author, subject, language, marked content flag, tab order. Issues that can't be auto-fixed provide manual fix guides.
+
+**Endpoints:** `POST /scan` (background scan), `POST /fix` (auto-fix), `GET /health`, `POST /api/v1/scan`, `POST /api/v1/remediate`, `POST /api/v1/dashboard`
+
+**Environment:** `BACKEND_URL` (default: `http://backend:5000`), `LOG_LEVEL`
+
+---
+
+## 9. Database & S3 Management
+
+### Connect to MongoDB
+
 ```bash
-cd frontend
-npm install
-npm run dev          # Start Vite dev server
-npm run build        # Build for production
-npm run preview      # Preview production build
-npm run lint         # Run linter
+# From Docker
+docker-compose exec mongo mongosh -u root -p root123 --authenticationDatabase admin
+
+# With MongoDB Compass GUI
+# Connection String: mongodb://root:root123@localhost:27017/?authSource=admin
 ```
 
-### Python Agent
-```bash
-cd python-agent
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload
+```javascript
+// In mongosh
+use pdf_accessibility
+db.getCollectionNames()
+db.scanjobs.find().pretty()
+db.scanresults.find().pretty()
+db.s3configs.find().pretty()
 ```
 
-## Production Deployment
+### S3 / LocalStack
+
+```bash
+# Create bucket
+docker exec pdf-localstack-dev awslocal s3 mb s3://pdf-bucket
+
+# Copy local file into container then upload
+docker cp "C:\path\to\file.pdf" pdf-localstack-dev:/tmp/file.pdf
+docker exec pdf-localstack-dev awslocal s3 cp /tmp/file.pdf s3://pdf-bucket/
+
+# Bulk upload folder
+docker cp "C:\path\to\folder" pdf-localstack-dev:/tmp/pdfs
+docker exec pdf-localstack-dev awslocal s3 cp /tmp/pdfs s3://pdf-bucket/ --recursive
+
+# List bucket contents
+docker exec pdf-localstack-dev awslocal s3 ls s3://pdf-bucket/
+```
+
+---
+
+## 10. Testing
+
+### Health Checks
+```bash
+curl http://localhost:5000/health
+curl http://localhost:8000/health
+```
+
+### Start a Scan
+```bash
+curl -X POST http://localhost:5000/api/scan/start \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "test.pdf", "s3Path": "s3://pdf-bucket/test.pdf"}'
+```
+
+### Karate API Tests
+```bash
+java -jar karate.jar tests/api.feature
+```
+
+### Unit Tests
+```bash
+cd backend && npm test
+cd frontend && npm test
+```
+
+---
+
+## 11. Troubleshooting
+
+### Services Won't Start
+```bash
+docker-compose ps                           # Check status
+docker-compose logs backend                 # View logs
+docker-compose logs python-agent
+docker-compose down && docker-compose build --no-cache && docker-compose up
+```
+
+### Port Already in Use
+```bash
+# Windows
+netstat -ano | findstr :5000
+taskkill /PID <PID> /F
+
+# Mac/Linux
+lsof -i :5000
+kill -9 <PID>
+```
+
+### MongoDB Connection Refused
+```bash
+docker-compose ps mongo
+docker-compose logs mongo
+docker-compose restart mongo
+```
+
+### Frontend Can't Reach Backend
+```bash
+curl http://localhost:5000/health
+# Verify VITE_API_URL: http://localhost:5000/api (local) or http://backend:5000/api (Docker)
+```
+
+### Python Agent Import Errors
+```bash
+python --version   # Should be 3.11+
+cd python-agent && pip install --upgrade -r requirements.txt
+```
+
+### npm Install Fails
+```bash
+npm cache clean --force
+npm install --legacy-peer-deps
+```
+
+---
+
+## 12. Production Deployment
 
 ### Pre-deployment Checklist
 
-1. **Security**
-   - [ ] All secrets in environment variables (no hardcoding)
-   - [ ] Input validation on all endpoints
-   - [ ] Rate limiting enabled
-   - [ ] CORS properly configured
-   - [ ] HTTPS/TLS enabled
+- [ ] All secrets in environment variables
+- [ ] Input validation on all endpoints
+- [ ] Strong `ENCRYPTION_KEY` (32+ chars)
+- [ ] HTTPS/TLS enabled
+- [ ] CORS properly configured
+- [ ] MongoDB backup strategy
+- [ ] Production MongoDB URI (not root:root123)
+- [ ] Real AWS S3 (remove `S3_ENDPOINT`)
+- [ ] Structured logging (JSON)
+- [ ] Error tracking (Sentry, etc.)
 
-2. **Database**
-   - [ ] MongoDB backup strategy
-   - [ ] Connection pooling configured
-   - [ ] Indexes created for query optimization
-
-3. **Monitoring**
-   - [ ] Structured logging (JSON)
-   - [ ] Error tracking (Sentry, etc.)
-   - [ ] Performance metrics
-   - [ ] Uptime monitoring
-
-4. **Scaling**
-   - [ ] Python workers can scale horizontally
-   - [ ] Backend behind load balancer
-   - [ ] Cache strategy for dashboard metrics
-
-### Docker Deployment
-
-Build images for production:
+### Docker Production Build
 
 ```bash
-# Option 1: Push to Docker Hub
 docker-compose build
 docker tag pdf-accessibility-backend myregistry/backend:latest
 docker push myregistry/backend:latest
-
-# Option 2: Push to AWS ECR
-aws ecr get-login-password | docker login --username AWS --password-stdin <account-id>.dkr.ecr.region.amazonaws.com
-docker tag pdf-accessibility-backend <account-id>.dkr.ecr.region.amazonaws.com/backend:latest
-docker push <account-id>.dkr.ecr.region.amazonaws.com/backend:latest
 ```
 
-Deploy to Kubernetes / Docker Swarm:
+---
 
-```yaml
-# Example: kubernetes-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: pdf-accessibility-backend
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: backend
-  template:
-    metadata:
-      labels:
-        app: backend
-    spec:
-      containers:
-      - name: backend
-        image: myregistry/backend:latest
-        ports:
-        - containerPort: 5000
-        env:
-        - name: MONGODB_URI
-          valueFrom:
-            secretKeyRef:
-              name: db-credentials
-              key: mongodb-uri
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-```
+## 13. Future Enhancements
 
-## Troubleshooting
+- Integrate PAC (PDF Accessibility Checker)
+- ML-based issue detection
+- Redis job queue (Celery) for scalability
+- Report generation (PDF, Excel)
+- Webhook notifications on scan completion
+- Jira/Azure DevOps sync
+- SAML/LDAP authentication
+- Historical trend analysis
+- Batch scanning with progress tracking
 
-### Services won't start
-```bash
-# Check logs
-docker-compose logs backend
-docker-compose logs python-agent
-docker-compose logs mongo
-
-# Rebuild without cache
-docker-compose build --no-cache
-docker-compose up --force-recreate
-```
-
-### MongoDB connection fails
-```bash
-# Verify MongoDB is running
-docker-compose ps mongo
-
-# Check connection string in .env
-# Default: mongodb://root:root123@mongo:27017/pdf_accessibility?authSource=admin
-```
-
-### Frontend can't reach backend
-```bash
-# Check backend is running
-curl http://localhost:5000/health
-
-# Verify VITE_API_URL in frontend/.env
-# Should be: http://backend:5000/api (in Docker)
-# or: http://localhost:5000/api (local dev)
-```
-
-### PDF scanning not working
-```bash
-# Check Python agent health
-curl http://localhost:8000/health
-
-# View Python agent logs
-docker-compose logs python-agent
-
-# Test scan endpoint
-curl -X POST http://localhost:8000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"jobId":"test","filename":"test.pdf","s3Path":"s3://bucket/test.pdf"}'
-```
-
-## Future Enhancements
-
-1. **Advanced PDF Analysis**
-   - Integrate PAC (PDF Accessibility Checker)
-   - Implement machine learning for issue detection
-   - Add support for form field validation
-
-2. **Scalability**
-   - Redis-based job queue (Celery)
-   - PDF preprocessing workers
-   - Distributed scanning across multiple agents
-
-3. **Features**
-   - PDF auto-remediation suggestions
-   - Batch scanning with progress tracking
-   - Report generation (PDF, Excel)
-   - Integration with PDFMaker, Adobe Acrobat Server API
-   - Webhook notifications on completion
-   - Historical trend analysis
-
-4. **Integration**
-   - Real S3 integration with credential management
-   - Jira/Azure DevOps sync for issues
-   - SAML/LDAP authentication
-   - Audit logging for compliance
-
-## Support & Documentation
-
-- **API Documentation**: Auto-generated at `http://localhost:8000/docs`
-- **System Diagram**: See ARCHITECTURE.md
-- **Setup Guide**: See SETUP.md
-- **Issues**: Create tickets in issue tracker
-- **Contact**: DevOps team
+---
 
 ## License
 

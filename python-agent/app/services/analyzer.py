@@ -1,7 +1,9 @@
 import PyPDF2
+import fitz  # PyMuPDF
 import logging
+import math
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,11 @@ class PDFAccessibilityAnalyzer:
                 issues.extend(self._check_fonts(pdf_reader))
                 issues.extend(self._check_images(pdf_reader))
                 issues.extend(self._check_pages(pdf_reader))
+                issues.extend(self._check_contrast(pdf_path))
+                issues.extend(self._check_orientation(pdf_reader))
+                issues.extend(self._check_text_spacing(pdf_path))
+                issues.extend(self._check_images_of_text(pdf_path, pdf_reader))
+                issues.extend(self._check_form_error_identification(pdf_reader))
 
                 # Tally guideline violations
                 for issue in issues:
@@ -45,7 +52,7 @@ class PDFAccessibilityAnalyzer:
                     if "EU" in cat:
                         guidelines["eu"] += 1
 
-                total_checks = 12  # total rules evaluated
+                total_checks = 17  # total rules evaluated
                 failed = len(issues)
                 compliance = round(max(0, (total_checks - failed) / total_checks * 100), 1)
 
@@ -331,6 +338,514 @@ class PDFAccessibilityAnalyzer:
                             "Then tag the document (Accessibility → Add Tags) so the text is properly structured.",
                         ],
                     })
+        except Exception:
+            pass
+        return issues
+
+    # ------------------------------------------------------------------
+    # Contrast check  (WCAG 1.4.3)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _relative_luminance(r: float, g: float, b: float) -> float:
+        """Compute relative luminance per WCAG 2.1 definition.
+        r, g, b are in 0‑1 range."""
+        def linearize(c: float) -> float:
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+
+    @classmethod
+    def _contrast_ratio(cls, fg: Tuple[float, float, float], bg: Tuple[float, float, float]) -> float:
+        """Return WCAG contrast ratio between two RGB colours (each 0‑1)."""
+        l1 = cls._relative_luminance(*fg)
+        l2 = cls._relative_luminance(*bg)
+        lighter = max(l1, l2)
+        darker = min(l1, l2)
+        return (lighter + 0.05) / (darker + 0.05)
+
+    @staticmethod
+    def _is_large_text(font_size: float, is_bold: bool) -> bool:
+        """WCAG large text: ≥18pt, or ≥14pt if bold."""
+        if font_size >= 18.0:
+            return True
+        if font_size >= 14.0 and is_bold:
+            return True
+        return False
+
+    def _check_contrast(self, pdf_path: str) -> List[Dict[str, Any]]:
+        """Check text‑to‑background contrast per WCAG 2.1 SC 1.4.3."""
+        issues = []
+        try:
+            doc = fitz.open(pdf_path)
+        except Exception as exc:
+            logger.warning("Could not open PDF with PyMuPDF for contrast check: %s", exc)
+            return issues
+
+        worst_ratio = None
+        worst_info = None
+
+        try:
+            for page_num, page in enumerate(doc, start=1):
+                # Get all drawings (filled rects) to build a background‑color map
+                bg_rects: List[Tuple[fitz.Rect, Tuple[float, float, float]]] = []
+                try:
+                    for drawing in page.get_drawings():
+                        if drawing.get("fill") and drawing.get("rect"):
+                            fill = drawing["fill"]
+                            if isinstance(fill, (list, tuple)) and len(fill) >= 3:
+                                bg_rects.append((fitz.Rect(drawing["rect"]), (fill[0], fill[1], fill[2])))
+                except Exception:
+                    pass
+
+                # Default page background is white
+                page_bg = (1.0, 1.0, 1.0)
+
+                # Extract text with detail
+                blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+                for block in blocks:
+                    if block.get("type") != 0:  # 0 = text block
+                        continue
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            text = span.get("text", "").strip()
+                            if not text:
+                                continue
+
+                            font_size = span.get("size", 12.0)
+                            flags = span.get("flags", 0)
+                            is_bold = bool(flags & (1 << 4))  # bit 4 = bold
+
+                            # Foreground colour (PyMuPDF gives int 0xRRGGBB)
+                            color_int = span.get("color", 0)
+                            fg = (
+                                ((color_int >> 16) & 0xFF) / 255.0,
+                                ((color_int >> 8) & 0xFF) / 255.0,
+                                (color_int & 0xFF) / 255.0,
+                            )
+
+                            # Find the background colour behind this span
+                            span_rect = fitz.Rect(span.get("bbox", (0, 0, 0, 0)))
+                            bg = page_bg
+                            best_overlap = 0.0
+                            for rect, rect_color in bg_rects:
+                                overlap = span_rect & rect  # intersection
+                                if overlap.is_empty:
+                                    continue
+                                area = overlap.width * overlap.height
+                                if area > best_overlap:
+                                    best_overlap = area
+                                    bg = rect_color
+
+                            ratio = self._contrast_ratio(fg, bg)
+                            large = self._is_large_text(font_size, is_bold)
+                            required = 3.0 if large else 4.5
+
+                            if ratio < required:
+                                if worst_ratio is None or ratio < worst_ratio:
+                                    worst_ratio = ratio
+                                    text_preview = text[:60] + ("..." if len(text) > 60 else "")
+                                    worst_info = {
+                                        "page": page_num,
+                                        "ratio": round(ratio, 2),
+                                        "required": required,
+                                        "large": large,
+                                        "text": text_preview,
+                                        "fg": fg,
+                                        "bg": bg,
+                                    }
+        except Exception as exc:
+            logger.warning("Contrast check error: %s", exc)
+        finally:
+            doc.close()
+
+        if worst_info:
+            fg_hex = "#{:02X}{:02X}{:02X}".format(
+                int(worst_info["fg"][0] * 255),
+                int(worst_info["fg"][1] * 255),
+                int(worst_info["fg"][2] * 255),
+            )
+            bg_hex = "#{:02X}{:02X}{:02X}".format(
+                int(worst_info["bg"][0] * 255),
+                int(worst_info["bg"][1] * 255),
+                int(worst_info["bg"][2] * 255),
+            )
+            text_type = "large text" if worst_info["large"] else "normal text"
+            issues.append({
+                "type": "low_contrast",
+                "category": "WCAG 2.1 - 1.4.3",
+                "severity": "major",
+                "description": (
+                    f"Text \"{worst_info['text']}\" on page {worst_info['page']} has a contrast ratio of "
+                    f"{worst_info['ratio']}:1 (foreground {fg_hex} on background {bg_hex}). "
+                    f"Minimum required for {text_type} is {worst_info['required']}:1."
+                ),
+                "suggestion": (
+                    "Increase the contrast between text colour and background colour. "
+                    "Use darker text on light backgrounds or lighter text on dark backgrounds "
+                    "to meet the WCAG minimum contrast ratio."
+                ),
+                "lineNumber": worst_info["page"],
+                "manualFixSteps": [
+                    "Identify the low-contrast text in the source document.",
+                    "Change the text colour or background colour to achieve at least a 4.5:1 ratio for normal text or 3:1 for large text (18pt+ or 14pt+ bold).",
+                    "Use a contrast checker tool (e.g. WebAIM Contrast Checker) to verify the new colours.",
+                    "Re-export the PDF from the updated source document.",
+                    "If editing the PDF directly in Acrobat, use Edit PDF to select the text and change its colour.",
+                ],
+            })
+
+        return issues
+
+    # ------------------------------------------------------------------
+    # 1.3.4 Orientation check
+    # ------------------------------------------------------------------
+
+    def _check_orientation(self, pdf_reader) -> List[Dict[str, Any]]:
+        """WCAG 2.1 SC 1.3.4 — content must not be locked to a single orientation."""
+        issues = []
+        try:
+            # Check ViewerPreferences for orientation lock
+            vp = pdf_reader.root_object.get("/ViewerPreferences")
+            if vp:
+                enforce = vp.get("/Enforce")
+                if enforce:
+                    enforce_list = [str(e) for e in enforce]
+                    if "/PrintPageRange" in enforce_list:
+                        issues.append({
+                            "type": "orientation_locked",
+                            "category": "WCAG 2.1 - 1.3.4",
+                            "severity": "major",
+                            "description": "Document enforces viewer preferences that may lock display orientation",
+                            "suggestion": "Remove orientation enforcement from ViewerPreferences so content adapts to any orientation",
+                            "manualFixSteps": [
+                                "Open the PDF in Adobe Acrobat Pro.",
+                                "Go to File → Properties → Initial View tab.",
+                                "Ensure no forced page layout or orientation restrictions are set.",
+                                "In code: remove /Enforce entries from /ViewerPreferences in the catalog.",
+                            ],
+                        })
+                        return issues
+
+            for page_num, page in enumerate(pdf_reader.pages, start=1):
+                # Check /VP (Viewport) with fixed dimensions suggesting orientation lock
+                vp_entry = page.get("/VP")
+                if vp_entry:
+                    try:
+                        for viewport in vp_entry:
+                            vp_obj = viewport.get_object() if hasattr(viewport, "get_object") else viewport
+                            measure = vp_obj.get("/Measure")
+                            if measure:
+                                issues.append({
+                                    "type": "orientation_locked",
+                                    "category": "WCAG 2.1 - 1.3.4",
+                                    "severity": "major",
+                                    "description": f"Page {page_num} has viewport constraints that may restrict orientation",
+                                    "suggestion": "Remove viewport-based orientation restrictions",
+                                    "manualFixSteps": [
+                                        "Open the PDF source document.",
+                                        "Ensure the content reflows for both portrait and landscape.",
+                                        "Re-export without fixed viewport constraints.",
+                                    ],
+                                })
+                                return issues
+                    except Exception:
+                        pass
+
+            # Check if ALL pages have the same non-zero rotation (forced landscape)
+            rotations = set()
+            for page in pdf_reader.pages:
+                r = page.get("/Rotate", 0)
+                if isinstance(r, PyPDF2.generic.IndirectObject):
+                    r = r.get_object()
+                rotations.add(int(r) if r else 0)
+
+            if len(rotations) == 1 and rotations != {0}:
+                forced = rotations.pop()
+                if forced in (90, 270):
+                    issues.append({
+                        "type": "orientation_locked",
+                        "category": "WCAG 2.1 - 1.3.4",
+                        "severity": "major",
+                        "description": f"All pages are rotated {forced}° — content may be locked to a single orientation",
+                        "suggestion": "Ensure content is not restricted to landscape or portrait only unless essential",
+                        "manualFixSteps": [
+                            "Open the PDF in Adobe Acrobat Pro.",
+                            "Go to Tools → Organize Pages.",
+                            "Check if all pages are forced to one orientation.",
+                            "If the rotation is not essential to the content, rotate pages back to 0°.",
+                            "Ensure the source document allows content to adapt to both orientations.",
+                        ],
+                    })
+        except Exception:
+            pass
+        return issues
+
+    # ------------------------------------------------------------------
+    # 1.4.12 Text Spacing check
+    # ------------------------------------------------------------------
+
+    def _check_text_spacing(self, pdf_path: str) -> List[Dict[str, Any]]:
+        """WCAG 2.1 SC 1.4.12 — text spacing must not cause loss of content.
+
+        We check for text that uses extremely tight letter/word spacing or
+        line height that could make the document fail when users apply custom
+        spacing overrides.
+        """
+        issues = []
+        try:
+            doc = fitz.open(pdf_path)
+        except Exception:
+            return issues
+
+        try:
+            for page_num, page in enumerate(doc, start=1):
+                blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+                for block in blocks:
+                    if block.get("type") != 0:
+                        continue
+                    lines = block.get("lines", [])
+                    if len(lines) < 2:
+                        continue
+
+                    # Check line spacing — if lines are packed too tightly
+                    for i in range(1, len(lines)):
+                        prev_spans = lines[i - 1].get("spans", [])
+                        curr_spans = lines[i].get("spans", [])
+                        if not prev_spans or not curr_spans:
+                            continue
+
+                        prev_size = prev_spans[0].get("size", 12)
+                        prev_bottom = lines[i - 1].get("bbox", [0, 0, 0, 0])[3]
+                        curr_top = lines[i].get("bbox", [0, 0, 0, 0])[1]
+                        line_gap = curr_top - prev_bottom
+
+                        if prev_size > 0 and line_gap < -(prev_size * 0.1):
+                            issues.append({
+                                "type": "text_spacing_overlap",
+                                "category": "WCAG 2.1 - 1.4.12",
+                                "severity": "major",
+                                "description": (
+                                    f"Page {page_num}: text lines are overlapping (gap: {round(line_gap, 1)}pt, "
+                                    f"font size: {round(prev_size, 1)}pt). "
+                                    "Increasing text spacing would worsen overlap and cause content loss."
+                                ),
+                                "suggestion": (
+                                    "Increase line spacing to at least 1.5× the font size. "
+                                    "Ensure the document reflows properly when users adjust text spacing."
+                                ),
+                                "lineNumber": page_num,
+                                "manualFixSteps": [
+                                    "Open the source document in its authoring tool.",
+                                    "Set line spacing to at least 1.5× the font size.",
+                                    "Set paragraph spacing to at least 2× the font size.",
+                                    "Set letter spacing to at least 0.12× the font size.",
+                                    "Set word spacing to at least 0.16× the font size.",
+                                    "Re-export the PDF and verify no content is clipped.",
+                                ],
+                            })
+                            doc.close()
+                            return issues
+
+                    # Check for extremely tight letter spacing
+                    for span in block.get("lines", [{}])[0].get("spans", []):
+                        text = span.get("text", "").strip()
+                        if len(text) < 3:
+                            continue
+                        bbox = span.get("bbox", [0, 0, 0, 0])
+                        span_width = bbox[2] - bbox[0]
+                        font_size = span.get("size", 12)
+                        if font_size <= 0:
+                            continue
+                        avg_char_width = span_width / len(text)
+                        if avg_char_width < font_size * 0.2 and len(text) > 5:
+                            issues.append({
+                                "type": "text_spacing_compressed",
+                                "category": "WCAG 2.1 - 1.4.12",
+                                "severity": "major",
+                                "description": (
+                                    f"Page {page_num}: text appears to have extremely compressed "
+                                    f"letter spacing ({round(avg_char_width, 1)}pt per character vs "
+                                    f"{round(font_size, 1)}pt font). Custom spacing overrides may cause "
+                                    "content to be lost or clipped."
+                                ),
+                                "suggestion": (
+                                    "Avoid compressing text. Use normal letter and word spacing "
+                                    "and allow the document to reflow when users adjust spacing."
+                                ),
+                                "lineNumber": page_num,
+                                "manualFixSteps": [
+                                    "Open the source document in its authoring tool.",
+                                    "Reset letter spacing and word spacing to normal/default values.",
+                                    "Ensure paragraphs have at least 1.5× line height.",
+                                    "Re-export the PDF.",
+                                ],
+                            })
+                            doc.close()
+                            return issues
+        except Exception as exc:
+            logger.warning("Text spacing check error: %s", exc)
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+        return issues
+
+    # ------------------------------------------------------------------
+    # 1.4.5 Images of Text check (improved)
+    # ------------------------------------------------------------------
+
+    def _check_images_of_text(self, pdf_path: str, pdf_reader) -> List[Dict[str, Any]]:
+        """WCAG 2.1 SC 1.4.5 — images should not be used to present text."""
+        issues = []
+        try:
+            doc = fitz.open(pdf_path)
+        except Exception:
+            return issues
+
+        try:
+            for page_num, page in enumerate(doc, start=1):
+                image_list = page.get_images(full=True)
+                if not image_list:
+                    continue
+
+                total_image_area = 0
+                page_area = page.rect.width * page.rect.height
+                if page_area <= 0:
+                    continue
+
+                for img in image_list:
+                    xref = img[0]
+                    try:
+                        img_rects = page.get_image_rects(xref)
+                        for r in img_rects:
+                            total_image_area += r.width * r.height
+                    except Exception:
+                        pass
+
+                image_coverage = total_image_area / page_area if page_area > 0 else 0
+                text = (page.get_text("text") or "").strip()
+                text_length = len(text)
+
+                if image_coverage > 0.5 and text_length < 20:
+                    issues.append({
+                        "type": "image_of_text",
+                        "category": "WCAG 2.1 - 1.4.5",
+                        "severity": "major",
+                        "description": (
+                            f"Page {page_num}: images cover {round(image_coverage * 100)}% of the page "
+                            f"with only {text_length} characters of real text. "
+                            "This page likely uses images to present text content."
+                        ),
+                        "suggestion": (
+                            "Replace images of text with actual text elements. "
+                            "Use styling to achieve the same visual presentation with real text."
+                        ),
+                        "lineNumber": page_num,
+                        "manualFixSteps": [
+                            "Identify text that is rendered as an image on this page.",
+                            "Replace image-based text with real text in the source document.",
+                            "Apply styling (fonts, colors, backgrounds) to achieve the same visual effect.",
+                            "If the image is essential (e.g. a logo), add alt text describing it.",
+                            "Re-export the PDF.",
+                        ],
+                    })
+                    doc.close()
+                    return issues
+        except Exception as exc:
+            logger.warning("Images of text check error: %s", exc)
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+        return issues
+
+    # ------------------------------------------------------------------
+    # 3.3.1 Error Identification check
+    # ------------------------------------------------------------------
+
+    def _check_form_error_identification(self, pdf_reader) -> List[Dict[str, Any]]:
+        """WCAG 2.1 SC 3.3.1 — required form fields must identify errors."""
+        issues = []
+        try:
+            root = pdf_reader.root_object
+            acroform = root.get("/AcroForm")
+            if not acroform:
+                return issues
+
+            fields = acroform.get("/Fields")
+            if not fields or len(fields) == 0:
+                return issues
+
+            required_no_validation = 0
+            total_required = 0
+            fields_missing_desc = []
+
+            for field_ref in fields:
+                try:
+                    field = field_ref.get_object() if hasattr(field_ref, "get_object") else field_ref
+                    ff = field.get("/Ff", 0)
+                    if isinstance(ff, PyPDF2.generic.IndirectObject):
+                        ff = ff.get_object()
+                    ff = int(ff) if ff else 0
+
+                    is_required = bool(ff & (1 << 1))
+                    if not is_required:
+                        continue
+
+                    total_required += 1
+
+                    aa = field.get("/AA")
+                    has_validation = False
+                    if aa:
+                        aa_obj = aa.get_object() if hasattr(aa, "get_object") else aa
+                        for action_key in ["/V", "/K", "/F"]:
+                            if aa_obj.get(action_key):
+                                has_validation = True
+                                break
+
+                    tu = field.get("/TU")
+                    has_description = bool(tu and str(tu).strip())
+
+                    field_name = str(field.get("/T", "unnamed"))
+
+                    if not has_validation and not has_description:
+                        required_no_validation += 1
+                        fields_missing_desc.append(field_name)
+
+                except Exception:
+                    continue
+
+            if required_no_validation > 0:
+                field_list = ", ".join(fields_missing_desc[:5])
+                if len(fields_missing_desc) > 5:
+                    field_list += f" (and {len(fields_missing_desc) - 5} more)"
+                issues.append({
+                    "type": "missing_error_identification",
+                    "category": "WCAG 2.1 - 3.3.1",
+                    "severity": "critical",
+                    "description": (
+                        f"{required_no_validation} of {total_required} required form field(s) "
+                        f"lack validation scripts and descriptive tooltips: {field_list}. "
+                        "Users will not be informed what went wrong if they submit invalid data."
+                    ),
+                    "suggestion": (
+                        "Add validation scripts (/AA actions) and descriptive tooltips (/TU) "
+                        "to all required form fields so users are informed of input errors."
+                    ),
+                    "manualFixSteps": [
+                        "Open the PDF in Adobe Acrobat Pro.",
+                        "Go to Tools → Prepare Form.",
+                        "Select each required field and open its Properties.",
+                        "In the Validate tab, add validation rules (e.g. format, range).",
+                        "In the General tab, add a Tooltip describing what input is expected.",
+                        "Ensure validation messages clearly describe the error.",
+                        "Test by submitting the form with invalid data to verify error messages appear.",
+                    ],
+                })
         except Exception:
             pass
         return issues
