@@ -35,6 +35,9 @@ yarn-error.log*
 *.tmp
 .cache/
 
+# Downloaded PDFs (generated at runtime)
+backend/backend/public/pdfs/
+
 # Docker
 .dockerignore
 

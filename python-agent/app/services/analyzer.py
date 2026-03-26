@@ -135,7 +135,7 @@ class PDFAccessibilityAnalyzer:
     def _check_language(self, pdf_reader) -> List[Dict[str, Any]]:
         issues = []
         try:
-            catalog = pdf_reader.root_object
+            catalog = pdf_reader.trailer['/Root']
             lang = catalog.get("/Lang")
             if not lang:
                 issues.append({
@@ -161,7 +161,7 @@ class PDFAccessibilityAnalyzer:
     def _check_structure(self, pdf_reader) -> List[Dict[str, Any]]:
         issues = []
         try:
-            root = pdf_reader.root_object
+            root = pdf_reader.trailer['/Root']
             if "/StructTreeRoot" not in root:
                 issues.append({
                     "type": "not_tagged_pdf",
@@ -290,7 +290,7 @@ class PDFAccessibilityAnalyzer:
 
             if image_count > 0:
                 # If the PDF isn't tagged we already flagged it; additionally flag images
-                has_struct = "/StructTreeRoot" in pdf_reader.root_object
+                has_struct = "/StructTreeRoot" in pdf_reader.trailer['/Root']
                 if not has_struct:
                     issues.append({
                         "type": "images_no_alt_text",
@@ -503,11 +503,14 @@ class PDFAccessibilityAnalyzer:
     def _check_orientation(self, pdf_reader) -> List[Dict[str, Any]]:
         """WCAG 2.1 SC 1.3.4 — content must not be locked to a single orientation."""
         issues = []
+
+        # --- Check ViewerPreferences for orientation lock ---
         try:
-            # Check ViewerPreferences for orientation lock
-            vp = pdf_reader.root_object.get("/ViewerPreferences")
+            vp = pdf_reader.trailer['/Root'].get("/ViewerPreferences")
             if vp:
-                enforce = vp.get("/Enforce")
+                if hasattr(vp, "get_object"):
+                    vp = vp.get_object()
+                enforce = vp.get("/Enforce") if hasattr(vp, "get") else None
                 if enforce:
                     enforce_list = [str(e) for e in enforce]
                     if "/PrintPageRange" in enforce_list:
@@ -519,65 +522,91 @@ class PDFAccessibilityAnalyzer:
                             "suggestion": "Remove orientation enforcement from ViewerPreferences so content adapts to any orientation",
                             "manualFixSteps": [
                                 "Open the PDF in Adobe Acrobat Pro.",
-                                "Go to File → Properties → Initial View tab.",
+                                "Go to File -> Properties -> Initial View tab.",
                                 "Ensure no forced page layout or orientation restrictions are set.",
                                 "In code: remove /Enforce entries from /ViewerPreferences in the catalog.",
                             ],
                         })
                         return issues
-
-            for page_num, page in enumerate(pdf_reader.pages, start=1):
-                # Check /VP (Viewport) with fixed dimensions suggesting orientation lock
-                vp_entry = page.get("/VP")
-                if vp_entry:
-                    try:
-                        for viewport in vp_entry:
-                            vp_obj = viewport.get_object() if hasattr(viewport, "get_object") else viewport
-                            measure = vp_obj.get("/Measure")
-                            if measure:
-                                issues.append({
-                                    "type": "orientation_locked",
-                                    "category": "WCAG 2.1 - 1.3.4",
-                                    "severity": "major",
-                                    "description": f"Page {page_num} has viewport constraints that may restrict orientation",
-                                    "suggestion": "Remove viewport-based orientation restrictions",
-                                    "manualFixSteps": [
-                                        "Open the PDF source document.",
-                                        "Ensure the content reflows for both portrait and landscape.",
-                                        "Re-export without fixed viewport constraints.",
-                                    ],
-                                })
-                                return issues
-                    except Exception:
-                        pass
-
-            # Check if ALL pages have the same non-zero rotation (forced landscape)
-            rotations = set()
-            for page in pdf_reader.pages:
-                r = page.get("/Rotate", 0)
-                if isinstance(r, PyPDF2.generic.IndirectObject):
-                    r = r.get_object()
-                rotations.add(int(r) if r else 0)
-
-            if len(rotations) == 1 and rotations != {0}:
-                forced = rotations.pop()
-                if forced in (90, 270):
-                    issues.append({
-                        "type": "orientation_locked",
-                        "category": "WCAG 2.1 - 1.3.4",
-                        "severity": "major",
-                        "description": f"All pages are rotated {forced}° — content may be locked to a single orientation",
-                        "suggestion": "Ensure content is not restricted to landscape or portrait only unless essential",
-                        "manualFixSteps": [
-                            "Open the PDF in Adobe Acrobat Pro.",
-                            "Go to Tools → Organize Pages.",
-                            "Check if all pages are forced to one orientation.",
-                            "If the rotation is not essential to the content, rotate pages back to 0°.",
-                            "Ensure the source document allows content to adapt to both orientations.",
-                        ],
-                    })
         except Exception:
             pass
+
+        # --- Check per-page Viewport constraints ---
+        try:
+            for page_num, page in enumerate(pdf_reader.pages, start=1):
+                vp_entry = page.get("/VP")
+                if vp_entry:
+                    for viewport in vp_entry:
+                        vp_obj = viewport.get_object() if hasattr(viewport, "get_object") else viewport
+                        measure = vp_obj.get("/Measure")
+                        if measure:
+                            issues.append({
+                                "type": "orientation_locked",
+                                "category": "WCAG 2.1 - 1.3.4",
+                                "severity": "major",
+                                "description": f"Page {page_num} has viewport constraints that may restrict orientation",
+                                "suggestion": "Remove viewport-based orientation restrictions",
+                                "manualFixSteps": [
+                                    "Open the PDF source document.",
+                                    "Ensure the content reflows for both portrait and landscape.",
+                                    "Re-export without fixed viewport constraints.",
+                                ],
+                            })
+                            return issues
+        except Exception:
+            pass
+
+        # --- Collect per-page rotation values ---
+        try:
+            rotations = []
+            for page in pdf_reader.pages:
+                r = page.get("/Rotate", 0)
+                if hasattr(r, "get_object"):
+                    r = r.get_object()
+                rotations.append(int(r) if r else 0)
+
+            locked_pages = [i + 1 for i, r in enumerate(rotations) if r in (90, 270)]
+
+            if locked_pages:
+                pages_str = ", ".join(str(p) for p in locked_pages[:5])
+                if len(locked_pages) > 5:
+                    pages_str += f" (and {len(locked_pages) - 5} more)"
+
+                if len(locked_pages) == len(rotations):
+                    desc = (
+                        f"All {len(rotations)} page(s) are rotated "
+                        f"{rotations[locked_pages[0]-1]} degrees, locking "
+                        "content to a single display orientation."
+                    )
+                else:
+                    desc = (
+                        f"Page(s) {pages_str} have a /Rotate value that "
+                        "forces a different orientation from other pages, "
+                        "restricting content to a specific orientation."
+                    )
+
+                issues.append({
+                    "type": "orientation_locked",
+                    "category": "WCAG 2.1 - 1.3.4",
+                    "severity": "major",
+                    "description": desc,
+                    "suggestion": (
+                        "Remove forced page rotation so content is not "
+                        "restricted to a single orientation unless essential "
+                        "for understanding (e.g. musical scores, physical "
+                        "measurements)."
+                    ),
+                    "manualFixSteps": [
+                        "Open the PDF in Adobe Acrobat Pro.",
+                        "Go to Tools -> Organize Pages.",
+                        "Select the rotated page(s) and set rotation to 0 degrees.",
+                        "If a landscape layout is needed, change the MediaBox dimensions instead of applying /Rotate.",
+                        "Ensure the source document allows content to adapt to both orientations.",
+                    ],
+                })
+        except Exception:
+            pass
+
         return issues
 
     # ------------------------------------------------------------------
@@ -771,7 +800,7 @@ class PDFAccessibilityAnalyzer:
         """WCAG 2.1 SC 3.3.1 — required form fields must identify errors."""
         issues = []
         try:
-            root = pdf_reader.root_object
+            root = pdf_reader.trailer['/Root']
             acroform = root.get("/AcroForm")
             if not acroform:
                 return issues

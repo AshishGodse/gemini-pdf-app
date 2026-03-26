@@ -158,6 +158,10 @@ router.get('/download/:configId/:filename', async (req: Request, res: Response) 
       fs.mkdirSync(pdfsDir, { recursive: true });
     }
     const localPath = path.join(pdfsDir, req.params.filename);
+    const localDir = path.dirname(localPath);
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
     fs.writeFileSync(localPath, data.Body as Buffer);
 
     logger.info(`Downloaded S3 file ${req.params.filename} to ${localPath}`);

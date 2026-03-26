@@ -110,6 +110,10 @@ router.post('/start', async (req: Request, res: Response) => {
 
         const data = await s3.getObject({ Bucket: config.bucket, Key: filename }).promise();
         const localPath = path.join(uploadsDir, filename);
+        const localDir = path.dirname(localPath);
+        if (!fs.existsSync(localDir)) {
+          fs.mkdirSync(localDir, { recursive: true });
+        }
         fs.writeFileSync(localPath, data.Body as Buffer);
         logger.info(`Downloaded S3 file ${filename} (${(data.Body as Buffer).length} bytes) to ${localPath}`);
       } catch (s3Err: any) {
