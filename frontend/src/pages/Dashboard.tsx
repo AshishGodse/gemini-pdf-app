@@ -30,6 +30,26 @@ interface DashboardMetrics {
   }>;
 }
 
+interface ScanEntry {
+  jobId: string;
+  filename: string;
+  compliance: number;
+  issues: number;
+  fixed: number;
+  status: string;
+  createdAt: string;
+}
+
+interface PaginatedScans {
+  scans: ScanEntry[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
 /* ---------- Circular Gauge ---------- */
 function GaugeCircle({ value, size = 180 }: { value: number; size?: number }) {
   const stroke = 14;
@@ -106,6 +126,9 @@ function prettyIssueType(raw: string) {
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [scansData, setScansData] = useState<PaginatedScans | null>(null);
+  const [scansPage, setScansPage] = useState(1);
+  const [scansPerPage, setScansPerPage] = useState(10);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -124,6 +147,18 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const fetchScans = async () => {
+      try {
+        const data = await dashboardAPI.getScans(scansPage, scansPerPage);
+        setScansData(data);
+      } catch (error) {
+        console.error('Error fetching scans:', error);
+      }
+    };
+    fetchScans();
+  }, [scansPage, scansPerPage]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -140,7 +175,7 @@ export default function Dashboard() {
     );
   }
 
-  const { summary, trends, topIssueTypes, recentScans } = metrics;
+  const { summary, trends, topIssueTypes } = metrics;
   const compliancePct = summary.avgCompliance;
   const rating = ratingLabel(compliancePct);
 
@@ -316,66 +351,149 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ---- Recent Scans Table ---- */}
+      {/* ---- All Scans Table with Pagination ---- */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Recent Scans</h3>
-        {recentScans.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 uppercase tracking-wider border-b">
-                  <th className="pb-3 pr-4">Filename</th>
-                  <th className="pb-3 pr-4">Status</th>
-                  <th className="pb-3 pr-4">Compliance</th>
-                  <th className="pb-3 pr-4">Issues</th>
-                  <th className="pb-3 pr-4">Fixed</th>
-                  <th className="pb-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {recentScans.map((scan, idx) => {
-                  const isCompliant = scan.status === 'compliant';
-                  const isPartial = scan.status === 'partially_compliant';
-                  return (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => navigate(`/scan/${scan.jobId}`)}>
-                      <td className="py-3 pr-4 font-medium text-gray-800">{scan.filename}</td>
-                      <td className="py-3 pr-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          isCompliant ? 'bg-green-100 text-green-700' :
-                          isPartial ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-red-100 text-red-700'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            isCompliant ? 'bg-green-500' : isPartial ? 'bg-yellow-500' : 'bg-red-500'
-                          }`} />
-                          {scan.status.replace(/_/g, ' ')}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4">
-                        <div className="flex items-center gap-2">
-                          <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full"
-                              style={{
-                                width: `${scan.compliance}%`,
-                                backgroundColor: scan.compliance >= 80 ? '#10b981' : scan.compliance >= 50 ? '#f59e0b' : '#ef4444',
-                              }}
-                            />
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-800">All Scans</h3>
+          {scansData && (
+            <div className="flex items-center gap-3 text-sm text-gray-500">
+              <span>{scansData.pagination.total} total scans</span>
+              <select
+                value={scansPerPage}
+                onChange={e => { setScansPerPage(Number(e.target.value)); setScansPage(1); }}
+                className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {[5, 10, 20, 50].map(n => (
+                  <option key={n} value={n}>{n} per page</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+        {scansData && scansData.scans.length > 0 ? (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 uppercase tracking-wider border-b">
+                    <th className="pb-3 pr-4">Filename</th>
+                    <th className="pb-3 pr-4">Status</th>
+                    <th className="pb-3 pr-4">Compliance</th>
+                    <th className="pb-3 pr-4">Issues</th>
+                    <th className="pb-3 pr-4">Fixed</th>
+                    <th className="pb-3"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {scansData.scans.map((scan, idx) => {
+                    const isCompliant = scan.status === 'compliant';
+                    const isPartial = scan.status === 'partially_compliant';
+                    return (
+                      <tr key={idx} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => navigate(`/scan/${scan.jobId}`)}>
+                        <td className="py-3 pr-4 font-medium text-gray-800">{scan.filename}</td>
+                        <td className="py-3 pr-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            isCompliant ? 'bg-green-100 text-green-700' :
+                            isPartial ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              isCompliant ? 'bg-green-500' : isPartial ? 'bg-yellow-500' : 'bg-red-500'
+                            }`} />
+                            {scan.status.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${scan.compliance}%`,
+                                  backgroundColor: scan.compliance >= 80 ? '#10b981' : scan.compliance >= 50 ? '#f59e0b' : '#ef4444',
+                                }}
+                              />
+                            </div>
+                            <span className="text-gray-700 font-medium">{scan.compliance}%</span>
                           </div>
-                          <span className="text-gray-700 font-medium">{scan.compliance}%</span>
-                        </div>
-                      </td>
-                      <td className="py-3 pr-4 text-gray-700">{scan.issues}</td>
-                      <td className="py-3 pr-4 text-gray-700">{scan.fixed}</td>
-                      <td className="py-3 text-right">
-                        <span className="text-indigo-500 text-xs font-medium">View →</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="py-3 pr-4 text-gray-700">{scan.issues}</td>
+                        <td className="py-3 pr-4 text-gray-700">{scan.fixed}</td>
+                        <td className="py-3 text-right">
+                          <span className="text-indigo-500 text-xs font-medium">View →</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* Pagination Controls */}
+            {scansData.pagination.totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                <p className="text-sm text-gray-500">
+                  Showing {(scansData.pagination.page - 1) * scansData.pagination.limit + 1}
+                  {' '}-{' '}
+                  {Math.min(scansData.pagination.page * scansData.pagination.limit, scansData.pagination.total)}
+                  {' '}of {scansData.pagination.total}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setScansPage(1)}
+                    disabled={scansPage === 1}
+                    className="px-2 py-1 text-sm rounded-md border border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    &laquo;
+                  </button>
+                  <button
+                    onClick={() => setScansPage(p => Math.max(1, p - 1))}
+                    disabled={scansPage === 1}
+                    className="px-3 py-1 text-sm rounded-md border border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Prev
+                  </button>
+                  {Array.from({ length: scansData.pagination.totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === scansData.pagination.totalPages || Math.abs(p - scansPage) <= 2)
+                    .reduce<(number | string)[]>((acc, p, i, arr) => {
+                      if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('...');
+                      acc.push(p);
+                      return acc;
+                    }, [])
+                    .map((item, i) =>
+                      item === '...' ? (
+                        <span key={`dots-${i}`} className="px-2 py-1 text-sm text-gray-400">...</span>
+                      ) : (
+                        <button
+                          key={item}
+                          onClick={() => setScansPage(item as number)}
+                          className={`px-3 py-1 text-sm rounded-md border ${
+                            scansPage === item
+                              ? 'bg-indigo-500 text-white border-indigo-500'
+                              : 'border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      )
+                    )}
+                  <button
+                    onClick={() => setScansPage(p => Math.min(scansData.pagination.totalPages, p + 1))}
+                    disabled={scansPage === scansData.pagination.totalPages}
+                    className="px-3 py-1 text-sm rounded-md border border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Next
+                  </button>
+                  <button
+                    onClick={() => setScansPage(scansData.pagination.totalPages)}
+                    disabled={scansPage === scansData.pagination.totalPages}
+                    className="px-2 py-1 text-sm rounded-md border border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    &raquo;
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <p className="text-gray-400 text-center py-8">No scans yet</p>
         )}

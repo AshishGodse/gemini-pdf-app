@@ -43,6 +43,10 @@ export const dashboardAPI = {
   getMetrics: async () => {
     const response = await api.get('/dashboard/metrics');
     return response.data;
+  },
+  getScans: async (page: number = 1, limit: number = 10) => {
+    const response = await api.get('/dashboard/scans', { params: { page, limit } });
+    return response.data;
   }
 };
 

@@ -86,4 +86,43 @@ router.get('/metrics', async (req: Request, res: Response) => {
   }
 });
 
+// Get paginated scan results
+router.get('/scans', async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const skip = (page - 1) * limit;
+
+    const [scans, total] = await Promise.all([
+      ScanResultModel.find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select('jobId filename compliancePercentage totalIssues issuesFixed status createdAt'),
+      ScanResultModel.countDocuments()
+    ]);
+
+    res.status(200).json({
+      scans: scans.map(r => ({
+        jobId: r.jobId,
+        filename: r.filename,
+        compliance: r.compliancePercentage,
+        issues: r.totalIssues,
+        fixed: r.issuesFixed,
+        status: r.status,
+        createdAt: r.createdAt
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching paginated scans:', error);
+    res.status(500).json({ error: 'Failed to fetch scans' });
+  }
+});
+
 export default router;
